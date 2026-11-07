@@ -11,6 +11,8 @@ const (
 	MissingFile    = "missing-file"
 	StubFile       = "stub-file"
 	IndexLink      = "index-link"
+	IndexDeadLink  = "index-dead-link"
+	ClaudeIndex    = "claude-index"
 	License        = "license"
 	PIIDenylist    = "pii-denylist"
 	PIIHomePath    = "pii-home-path"

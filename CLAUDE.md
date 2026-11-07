@@ -21,3 +21,5 @@ Rules that are easy to break:
 - Add a dependency only with a written reason; the tool is meant to run
   anywhere with a bare Go toolchain.
 - Commits use Conventional Commits; release-please builds the changelog.
+
+Every document is indexed in [docs/INDEX.md](docs/INDEX.md).
