@@ -195,6 +195,20 @@ func IndexTargets(files []string) []IndexTarget {
 	return out
 }
 
+// UnindexedTargets returns the index targets of files that the markdown of
+// docs/INDEX.md does not link — the same set the index-link check reports.
+// repo-standards index appends a row per result.
+func UnindexedTargets(md string, files []string) []IndexTarget {
+	linked := linkTargets(md, path.Dir(indexPath))
+	var out []IndexTarget
+	for _, t := range IndexTargets(files) {
+		if !linked[t.Path] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // checkIndex requires docs/INDEX.md to link every tracked .md under docs/,
 // every root document and every nested CLAUDE.md, and every in-repo link in it
 // to resolve to a tracked file or directory.
@@ -205,13 +219,10 @@ func checkIndex(files []string, content map[string][]byte) []Finding {
 	}
 	// A map lookup, not a shell pipeline: the shell version of this check
 	// (`printf | grep -q` under pipefail) returned random results on Linux
-	// because grep -q exits early and printf gets SIGPIPE.
-	linked := linkTargets(string(data), path.Dir(indexPath))
+	// because grep -q exits on the first match and the writer received
+	// SIGPIPE.
 	var out []Finding
-	for _, t := range IndexTargets(files) {
-		if linked[t.Path] {
-			continue
-		}
+	for _, t := range UnindexedTargets(string(data), files) {
 		msg := "not linked from " + indexPath
 		switch t.Kind {
 		case "root":

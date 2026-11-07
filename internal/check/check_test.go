@@ -2,6 +2,7 @@ package check
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -70,12 +71,39 @@ func TestMissingTemplateFiles(t *testing.T) {
 }
 
 func TestPullRequestTemplateSpellings(t *testing.T) {
-	for _, name := range []string{".github/PULL_REQUEST_TEMPLATE.md", "pull_request_template.md", "docs/pull_request_template.md"} {
+	for _, name := range []string{".github/PULL_REQUEST_TEMPLATE.md", "pull_request_template.md", "docs/pull_request_template.md",
+		"PULL_REQUEST_TEMPLATE.md", "docs/PULL_REQUEST_TEMPLATE.md", ".github/PULL_REQUEST_TEMPLATE/bugfix.md"} {
 		files := without(goodFiles(Public), ".github/pull_request_template.md")
 		files[name] = prose("Pull request", 1)
 		// A template under docs/ is a docs page: the index must link it.
 		if strings.HasPrefix(name, "docs/") {
-			files["docs/INDEX.md"] += "- [PR template](pull_request_template.md)\n"
+			files["docs/INDEX.md"] += "- [PR template](" + path.Base(name) + ")\n"
+		}
+		if fs := run(t, writeRepo(t, files), Public, nil); len(fs) != 0 {
+			t.Errorf("%s: %v", name, fs)
+		}
+	}
+	// A non-Markdown file, or one nested below the template directory, does
+	// not count: GitHub reads only .md files directly inside it.
+	for _, name := range []string{".github/PULL_REQUEST_TEMPLATE/bugfix.txt", ".github/PULL_REQUEST_TEMPLATE/nested/x.md"} {
+		files := without(goodFiles(Public), ".github/pull_request_template.md")
+		files[name] = prose("Pull request", 1)
+		got := ids(run(t, writeRepo(t, files), Public, nil))
+		if want := []string{MissingFile + " .github/pull_request_template.md"}; !equal(got, want) {
+			t.Errorf("%s: got %v want %v", name, got, want)
+		}
+	}
+}
+
+// The legacy single-file issue templates GitHub accepts satisfy the
+// requirement exactly like a file in the template directory.
+func TestLegacyIssueTemplateFiles(t *testing.T) {
+	for _, name := range []string{"ISSUE_TEMPLATE.md", ".github/ISSUE_TEMPLATE.md", "docs/ISSUE_TEMPLATE.md"} {
+		files := without(goodFiles(Public), ".github/ISSUE_TEMPLATE/bug_report.yml", ".github/ISSUE_TEMPLATE/config.yml")
+		files[name] = prose("Issue", 1)
+		// A template under docs/ is a docs page: the index must link it.
+		if strings.HasPrefix(name, "docs/") {
+			files["docs/INDEX.md"] += "- [Issue](ISSUE_TEMPLATE.md)\n"
 		}
 		if fs := run(t, writeRepo(t, files), Public, nil); len(fs) != 0 {
 			t.Errorf("%s: %v", name, fs)

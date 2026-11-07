@@ -19,7 +19,7 @@ func do(args ...string) (code int, out, errOut string) {
 func TestUsageErrors(t *testing.T) {
 	for _, args := range [][]string{{}, {"bogus"}, {"check", "--visibility", "internal", t.TempDir()}, {"check", "a", "b"},
 		{"init", "--visibility", "internal", t.TempDir()}, {"init", "--license", "bogus", t.TempDir()},
-		{"init", "--year", "20x6", t.TempDir()}, {"init", "a", "b"}} {
+		{"init", "--year", "20x6", t.TempDir()}, {"init", "a", "b"}, {"index", "a", "b"}} {
 		if code, _, _ := do(args...); code != exitUsage {
 			t.Errorf("%v: exit %d", args, code)
 		}
@@ -56,6 +56,37 @@ func TestInitRun(t *testing.T) {
 	}
 	if ents, _ := os.ReadDir(dir3); len(ents) != 0 {
 		t.Fatalf("failed init wrote %v", ents)
+	}
+}
+
+func TestIndexRun(t *testing.T) {
+	dir := t.TempDir()
+	code, out, e := do("index", dir)
+	if code != exitOK || !strings.Contains(out, "created docs/INDEX.md") {
+		t.Fatalf("%d\n%s\n%s", code, out, e)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docs", "INDEX.md")); err != nil {
+		t.Fatal("docs/INDEX.md not written")
+	}
+	// A second run finds nothing to index.
+	code, out, _ = do("index", dir)
+	if code != exitOK || !strings.Contains(out, "is complete") {
+		t.Fatalf("%d %q", code, out)
+	}
+	// A tracked-but-unlinked document gets a row.
+	if err := os.WriteFile(filepath.Join(dir, "docs", "extra.md"), []byte("# Extra\n\nSome words here.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = do("index", "--dry-run", dir)
+	if code != exitOK || !strings.Contains(out, "would index docs/extra.md") {
+		t.Fatalf("dry-run: %d %q", code, out)
+	}
+	if code, out, _ := do("index", dir); code != exitOK || !strings.Contains(out, "indexed docs/extra.md") {
+		t.Fatalf("%d %q", code, out)
+	}
+	idx, _ := os.ReadFile(filepath.Join(dir, "docs", "INDEX.md"))
+	if !strings.Contains(string(idx), "](extra.md)") {
+		t.Fatalf("no row appended:\n%s", idx)
 	}
 }
 

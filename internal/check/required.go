@@ -14,13 +14,24 @@ type requirement struct {
 	// contain "[yyyy]" boilerplate; .gitignore has no prose; an issue template
 	// is itself fill-in scaffolding).
 	skipPlaceholders bool
-	// dir, when non-empty, makes this a directory requirement instead of a
-	// fixed name: it is satisfied by the first tracked file directly inside it
-	// that is a template file (see isTemplateFile).
-	dir string
+	// dir, when non-empty, adds a directory alternative: the requirement is
+	// also satisfied by the first tracked file directly inside it for which
+	// dirFile reports true.
+	dir     string
+	dirFile func(rest string) bool
+	dirHint string // how the dir alternative reads in the missing-file message
 }
 
-const issueTemplateDir = ".github/ISSUE_TEMPLATE/"
+// Canonical names of the requirements whose spelling list or template
+// directory init must share with the check: init writes the canonical name
+// and keeps a file only when it is one of the accepted spellings.
+const (
+	IssueTemplateDir    = ".github/ISSUE_TEMPLATE/"
+	PullRequestTemplate = ".github/pull_request_template.md"
+	LicenceFile         = "LICENSE"
+)
+
+const pullTemplateDir = ".github/PULL_REQUEST_TEMPLATE/"
 
 // requirements is the standard document set. It is identical for public and
 // private repositories.
@@ -34,9 +45,15 @@ var requirements = []requirement{
 	{names: []string{"CODE_OF_CONDUCT.md"}, min: 150},
 	{names: []string{".gitignore"}, min: 1, skipPlaceholders: true},
 	{names: []string{"docs/INDEX.md"}, min: 60},
-	{names: []string{".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md",
-		"pull_request_template.md", "docs/pull_request_template.md"}, min: 30},
-	{names: []string{issueTemplateDir}, min: 30, skipPlaceholders: true, dir: issueTemplateDir},
+	{names: []string{PullRequestTemplate, ".github/PULL_REQUEST_TEMPLATE.md",
+		"pull_request_template.md", "PULL_REQUEST_TEMPLATE.md",
+		"docs/pull_request_template.md", "docs/PULL_REQUEST_TEMPLATE.md"},
+		min: 30, dir: pullTemplateDir, dirFile: isMarkdownFile,
+		dirHint: "a .md file directly inside " + pullTemplateDir},
+	{names: []string{IssueTemplateDir, "ISSUE_TEMPLATE.md", ".github/ISSUE_TEMPLATE.md",
+		"docs/ISSUE_TEMPLATE.md"}, min: 30, skipPlaceholders: true,
+		dir: IssueTemplateDir, dirFile: isTemplateFile,
+		dirHint: "at least one .yml, .yaml or .md issue template other than config.yml"},
 }
 
 // isTemplateFile reports whether the part of a path below an issue-template
@@ -57,6 +74,12 @@ func isTemplateFile(rest string) bool {
 	return false
 }
 
+// isMarkdownFile reports whether the part of a path below a multi-template
+// directory names a template: a Markdown file directly inside it.
+func isMarkdownFile(rest string) bool {
+	return !strings.Contains(rest, "/") && strings.EqualFold(path.Ext(rest), ".md")
+}
+
 // placeholder patterns: text left over from a template.
 var placeholders = []struct {
 	name string
@@ -70,15 +93,14 @@ var placeholders = []struct {
 }
 
 // found returns the first present spelling of a requirement, or the first
-// tracked template file for a directory requirement.
+// file satisfying its directory alternative.
 func (r requirement) found(files []string, set map[string]bool) (string, bool) {
 	if r.dir != "" {
 		for _, f := range files {
-			if rest, ok := strings.CutPrefix(f, r.dir); ok && isTemplateFile(rest) {
+			if rest, ok := strings.CutPrefix(f, r.dir); ok && r.dirFile(rest) {
 				return f, true
 			}
 		}
-		return "", false
 	}
 	for _, n := range r.names {
 		if set[n] {
@@ -88,17 +110,47 @@ func (r requirement) found(files []string, set map[string]bool) (string, bool) {
 	return "", false
 }
 
+// FoundPath reports the first path in files that satisfies the requirement
+// identified by canonical (its names[0]). It is the existence predicate the
+// required-file check itself runs; init calls it on the union of tracked
+// files and the work tree so it never claims kept for a spelling the check
+// would reject.
+func FoundPath(canonical string, files []string) (string, bool) {
+	for _, r := range requirements {
+		if r.names[0] == canonical {
+			set := make(map[string]bool, len(files))
+			for _, f := range files {
+				set[f] = true
+			}
+			return r.found(files, set)
+		}
+	}
+	return "", false
+}
+
+// AcceptedSpellings lists the accepted spellings of the requirement
+// identified by canonical, canonical first; nil for an unknown name.
+func AcceptedSpellings(canonical string) []string {
+	for _, r := range requirements {
+		if r.names[0] == canonical {
+			return r.names
+		}
+	}
+	return nil
+}
+
 func checkRequired(root string, files []string, set map[string]bool, content map[string][]byte) []Finding {
 	var out []Finding
 	for _, r := range requirements {
 		name, ok := r.found(files, set)
 		if !ok {
 			msg := "missing required file " + r.names[0]
-			switch {
-			case r.dir != "":
-				msg += " (at least one .yml, .yaml or .md issue template other than config.yml)"
-			case len(r.names) > 1:
-				msg += " (or " + strings.Join(r.names[1:], ", ") + ")"
+			alts := append([]string{}, r.names[1:]...)
+			if r.dirHint != "" {
+				alts = append(alts, r.dirHint)
+			}
+			if len(alts) > 0 {
+				msg += " (or " + strings.Join(alts, ", ") + ")"
 			}
 			out = append(out, Finding{Check: MissingFile, Path: r.names[0], Msg: msg})
 			continue

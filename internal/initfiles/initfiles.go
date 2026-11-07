@@ -46,6 +46,9 @@ type Result struct {
 	// init never writes. The file set is the tracked files plus the files this
 	// run created, so it is what check will see once they are added.
 	Missing []check.Finding
+	// Hint, when non-empty, is the follow-up command a maintainer runs next:
+	// indexing the documents init leaves for a human.
+	Hint string
 	// NotGit is set when root was not a git work tree.
 	NotGit bool
 }
@@ -55,19 +58,22 @@ var (
 	repoRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 )
 
-// licenceNames are the spellings the required-file check accepts for the
-// licence; init writes the first when none is present.
-var licenceNames = []string{"LICENSE", "LICENSE.md", "LICENSE.txt"}
-
-// pullTemplateNames are the spellings GitHub accepts for the pull-request
-// template, canonical first.
-var pullTemplateNames = []string{".github/pull_request_template.md",
-	".github/PULL_REQUEST_TEMPLATE.md", "pull_request_template.md",
-	"docs/pull_request_template.md"}
+// slugOK reports whether s is an OWNER/NAME pair where neither part is "." or
+// "..": those spell out directory traversal, not a repository.
+func slugOK(s string) bool {
+	if !repoRE.MatchString(s) {
+		return false
+	}
+	owner, name, _ := strings.Cut(s, "/")
+	return owner != "." && owner != ".." && name != "." && name != ".."
+}
 
 // Run writes the missing boilerplate under opts.Root and reports the required
-// files still absent afterwards.
-func Run(opts Options) (Result, error) {
+// files still absent afterwards. Every planned write is validated before the
+// first one lands, so a bad path aborts the run instead of leaving a
+// half-written repository; a write that still fails returns the lines
+// collected so far.
+func Run(opts Options) (res Result, err error) {
 	if opts.Visibility != check.Public && opts.Visibility != check.Private {
 		return Result{}, fmt.Errorf("visibility must be %q or %q, got %q", check.Public, check.Private, opts.Visibility)
 	}
@@ -84,110 +90,152 @@ func Run(opts Options) (Result, error) {
 	if !yearRE.MatchString(year) {
 		return Result{}, fmt.Errorf("--year must be a year or range like 2026 or 2024-2026, got %q", year)
 	}
-	if opts.Repo != "" && !repoRE.MatchString(opts.Repo) {
+	if opts.Repo != "" && !slugOK(opts.Repo) {
 		return Result{}, fmt.Errorf("--repo must be OWNER/NAME, got %q", opts.Repo)
 	}
-	exists := func(rel string) bool {
-		_, err := os.Lstat(filepath.Join(opts.Root, filepath.FromSlash(rel)))
-		return err == nil
+	// The file universe init decides on is the tracked set the check uses
+	// plus the work tree: an untracked file is kept too, but only under its
+	// real on-disk spelling.
+	files, notGit, err := check.RepoFiles(opts.Root)
+	if err != nil {
+		return Result{}, err
 	}
-	licenceExists := exists(licenceNames[0]) || exists(licenceNames[1]) || exists(licenceNames[2])
+	res.NotGit = notGit
+	resolvedRoot, err := filepath.EvalSymlinks(opts.Root)
+	if err != nil {
+		return Result{}, err
+	}
+	all, present, err := fileUniverse(resolvedRoot, files)
+	if err != nil {
+		return Result{}, err
+	}
+	// Existence is the check's own predicate over the same universe, so init
+	// never claims kept for a spelling the check would reject.
+	licenceName, licenceExists := check.FoundPath(check.LicenceFile, all)
+	issueName, issueExists := check.FoundPath(check.IssueTemplateDir, all)
+	pullName, pullExists := check.FoundPath(check.PullRequestTemplate, all)
 	needHolder := !licenceExists &&
 		(opts.Visibility == check.Private || opts.License == "mit")
 	if needHolder && opts.Holder == "" {
 		return Result{}, fmt.Errorf("--holder is required to write LICENSE: it carries the copyright name")
 	}
-	// Resolve every input that can fail before touching the disk, so an error
-	// never leaves a half-written repository.
+	// The plan is an ordered list of kept notes and writes; rendering is
+	// deferred until the repo slug is resolved.
 	repo := opts.Repo
-	needRepo := opts.Visibility == check.Public &&
-		(!exists("SECURITY.md") || !exists(".github/ISSUE_TEMPLATE/config.yml"))
-	if needRepo && repo == "" {
-		var err error
-		if repo, err = originSlug(opts.Root); err != nil {
-			return Result{}, fmt.Errorf("cannot build the GitHub advisory links: %v; pass --repo OWNER/NAME", err)
-		}
+	type action struct {
+		line   string        // kept/skipped note, when rel is empty
+		rel    string        // write target, when non-empty
+		render func() []byte // produces the content to write
+		data   []byte
 	}
-	files, notGit, err := check.RepoFiles(opts.Root)
-	if err != nil {
-		return Result{}, err
+	var plan []action
+	keep := func(line string) { plan = append(plan, action{line: line}) }
+	put := func(rel string, render func() []byte) {
+		plan = append(plan, action{rel: rel, render: render})
 	}
-	res := Result{NotGit: notGit}
-	var newPaths []string
-	written := map[string][]byte{} // content this run produced, for the INDEX
-	write := func(rel string, data []byte) error {
-		if opts.DryRun {
-			if exists(rel) {
-				res.Lines = append(res.Lines, "kept "+rel)
-			} else {
-				res.Lines = append(res.Lines, "would create "+rel)
-				newPaths = append(newPaths, rel)
-				written[rel] = data
-			}
-			return nil
-		}
-		created, err := writeNew(opts.Root, rel, data)
-		if err != nil {
-			return err
-		}
-		if created {
-			res.Lines = append(res.Lines, "created "+rel)
-			newPaths = append(newPaths, rel)
-			written[rel] = data
+	putOrKeep := func(rel string, render func() []byte) {
+		if present[rel] {
+			keep("kept " + rel)
 		} else {
-			res.Lines = append(res.Lines, "kept "+rel)
-		}
-		return nil
-	}
-	// writeAny creates names[0] unless one of the accepted spellings exists,
-	// which is kept under its own name.
-	writeAny := func(names []string, data []byte) error {
-		for _, n := range names {
-			if exists(n) {
-				res.Lines = append(res.Lines, "kept "+n)
-				return nil
-			}
-		}
-		return write(names[0], data)
-	}
-	filesToWrite := []struct {
-		rel  string
-		data []byte
-	}{
-		{"CODE_OF_CONDUCT.md", []byte(codeOfConduct)},
-		{"SECURITY.md", securityDoc(opts.Visibility, repo)},
-		{".github/ISSUE_TEMPLATE/bug_report.yml", []byte(bugReportForm)},
-		{".github/ISSUE_TEMPLATE/feature_request.yml", []byte(featureRequestForm)},
-		{".github/ISSUE_TEMPLATE/config.yml", issueConfig(opts.Visibility, repo)},
-	}
-	for _, f := range filesToWrite {
-		if err := write(f.rel, f.data); err != nil {
-			return Result{}, err
+			put(rel, render)
 		}
 	}
-	if err := writeAny(pullTemplateNames, []byte(pullRequestTemplate)); err != nil {
-		return Result{}, err
+	putOrKeep("CODE_OF_CONDUCT.md", func() []byte { return []byte(codeOfConduct) })
+	putOrKeep("SECURITY.md", func() []byte { return securityDoc(opts.Visibility, repo) })
+	// A repository with its own issue templates — a template file under
+	// .github/ISSUE_TEMPLATE/ or a legacy single file — keeps its issue
+	// intake exactly as it is; the blank_issues_enabled chooser config would
+	// silently change it.
+	if issueExists {
+		keep("kept issue templates (" + issueName + ")")
+	} else {
+		putOrKeep(".github/ISSUE_TEMPLATE/bug_report.yml", func() []byte { return []byte(bugReportForm) })
+		putOrKeep(".github/ISSUE_TEMPLATE/feature_request.yml", func() []byte { return []byte(featureRequestForm) })
+		putOrKeep(".github/ISSUE_TEMPLATE/config.yml", func() []byte { return issueConfig(opts.Visibility, repo) })
+	}
+	if pullExists {
+		keep("kept " + pullName)
+	} else {
+		putOrKeep(check.PullRequestTemplate, func() []byte { return []byte(pullRequestTemplate) })
 	}
 	switch lic := licenceText(opts, licenceExists, year); {
 	case lic == nil && !licenceExists && opts.Visibility == check.Public:
-		res.Lines = append(res.Lines, "skipped LICENSE: choose a licence with --license")
+		keep("skipped LICENSE: choose a licence with --license")
 	case lic != nil:
-		if err := writeAny(licenceNames, lic); err != nil {
-			return Result{}, err
-		}
+		put(check.AcceptedSpellings(check.LicenceFile)[0], func() []byte { return lic })
 	default:
-		res.Lines = append(res.Lines, "kept "+firstPresent(licenceNames, exists))
+		keep("kept " + licenceName)
 	}
-	// docs/INDEX.md is generated, not templated: it must link what this run
-	// created, so it goes last.
-	if !exists("docs/INDEX.md") {
-		universe := append(append([]string{}, files...), newPaths...)
-		sort.Strings(universe)
-		if err := write("docs/INDEX.md", []byte(indexMarkdown(opts.Root, universe, written))); err != nil {
-			return Result{}, err
+	// The advisory links need OWNER/NAME, and only when a file carrying them
+	// is actually written: --repo, else the origin remote, else an error
+	// before anything is written.
+	if repo == "" && opts.Visibility == check.Public {
+		for _, a := range plan {
+			if a.rel == "SECURITY.md" || a.rel == ".github/ISSUE_TEMPLATE/config.yml" {
+				var serr error
+				if repo, serr = originSlug(opts.Root); serr != nil {
+					return Result{}, fmt.Errorf("cannot build the GitHub advisory links: %v; pass --repo OWNER/NAME", serr)
+				}
+				break
+			}
 		}
+	}
+	written := map[string][]byte{} // content this run produced, for the INDEX
+	if !present["docs/INDEX.md"] {
+		put("docs/INDEX.md", func() []byte {
+			// The index is generated, not templated: it links every target the
+			// index check requires, including what this run created.
+			var universe []string
+			universe = append(universe, files...)
+			for _, a := range plan {
+				if a.rel != "" {
+					universe = append(universe, a.rel)
+				}
+			}
+			sort.Strings(universe)
+			return []byte(indexMarkdown(resolvedRoot, universe, written))
+		})
 	} else {
-		res.Lines = append(res.Lines, "kept docs/INDEX.md")
+		keep("kept docs/INDEX.md")
+	}
+	for i := range plan {
+		if plan[i].render == nil {
+			continue
+		}
+		plan[i].data = plan[i].render()
+		written[plan[i].rel] = plan[i].data
+	}
+	// Validate every planned write before the first lands: a parent that is a
+	// regular file or a symlink escape aborts the run with nothing written.
+	for _, a := range plan {
+		if a.rel == "" {
+			continue
+		}
+		if err := checkPath(resolvedRoot, a.rel); err != nil {
+			return res, err
+		}
+	}
+	var newPaths []string
+	for _, a := range plan {
+		if a.rel == "" {
+			res.Lines = append(res.Lines, a.line)
+			continue
+		}
+		if opts.DryRun {
+			res.Lines = append(res.Lines, "would create "+a.rel)
+			newPaths = append(newPaths, a.rel)
+			continue
+		}
+		created, err := writeNew(opts.Root, a.rel, a.data)
+		if err != nil {
+			return res, err
+		}
+		if created {
+			res.Lines = append(res.Lines, "created "+a.rel)
+			newPaths = append(newPaths, a.rel)
+		} else {
+			res.Lines = append(res.Lines, "kept "+a.rel)
+		}
 	}
 	universe := append(append([]string{}, files...), newPaths...)
 	sort.Strings(universe)
@@ -196,16 +244,112 @@ func Run(opts Options) (Result, error) {
 			res.Missing = append(res.Missing, f)
 		}
 	}
+	if len(res.Missing) > 0 {
+		var missing []string
+		for _, f := range res.Missing {
+			missing = append(missing, f.Path)
+		}
+		future := append(append([]string{}, universe...), missing...)
+		want := map[string]bool{}
+		for _, t := range check.IndexTargets(future) {
+			want[t.Path] = true
+		}
+		var pending []string
+		for _, f := range res.Missing {
+			if want[f.Path] {
+				pending = append(pending, f.Path)
+			}
+		}
+		if len(pending) > 0 {
+			res.Hint = "run 'repo-standards index' after adding " + strings.Join(pending, ", ")
+		}
+	}
 	return res, nil
 }
 
-func firstPresent(names []string, exists func(string) bool) string {
-	for _, n := range names {
-		if exists(n) {
-			return n
+// fileUniverse merges the tracked files with the work-tree listing under
+// resolvedRoot: the set init's kept-decisions run on.
+func fileUniverse(resolvedRoot string, files []string) (all []string, present map[string]bool, err error) {
+	disk, err := diskFiles(resolvedRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	present = make(map[string]bool, len(files)+len(disk))
+	for _, f := range files {
+		present[f] = true
+	}
+	for _, f := range disk {
+		present[f] = true
+	}
+	all = make([]string, 0, len(present))
+	for f := range present {
+		all = append(all, f)
+	}
+	sort.Strings(all)
+	return all, present, nil
+}
+
+// diskFiles returns the work-tree files under resolvedRoot as slash-separated
+// relative paths. Names come from directory listings, so they carry the real
+// on-disk spelling even on a case-insensitive filesystem — unlike an Lstat of
+// a candidate name, which would claim a differently-cased file exists.
+func diskFiles(resolvedRoot string) ([]string, error) {
+	var out []string
+	err := filepath.WalkDir(resolvedRoot, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(resolvedRoot, p)
+		if err != nil {
+			return err
+		}
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	return out, err
+}
+
+// checkPath verifies a planned write stays inside the repository. Every
+// existing component of rel under resolvedRoot must resolve inside the root
+// and, for a parent component, be a directory; a component that does not
+// exist ends the check, as it and everything below it will be created.
+func checkPath(resolvedRoot, rel string) error {
+	cur := resolvedRoot
+	segs := strings.Split(rel, "/")
+	for i, seg := range segs {
+		if seg == "." || seg == "" {
+			continue
+		}
+		cur = filepath.Join(cur, seg)
+		resolved, err := filepath.EvalSymlinks(cur)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil // to be created; nothing below can exist
+			}
+			return fmt.Errorf("%s: %v", rel, err)
+		}
+		inside, err := filepath.Rel(resolvedRoot, resolved)
+		if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("%s: %s resolves outside the repository", rel, strings.Join(segs[:i+1], "/"))
+		}
+		if i == len(segs)-1 {
+			return nil
+		}
+		st, err := os.Stat(resolved)
+		if err != nil {
+			return err
+		}
+		if !st.IsDir() {
+			return fmt.Errorf("%s: %s is not a directory", rel, strings.Join(segs[:i+1], "/"))
 		}
 	}
-	return names[0]
+	return nil
 }
 
 // securityDoc renders SECURITY.md; the public variant carries the private
@@ -285,25 +429,50 @@ func originSlug(root string) (string, error) {
 
 // parseGitHubURL extracts OWNER/NAME from a GitHub remote URL:
 // https://github.com/OWNER/NAME, git@github.com:OWNER/NAME or
-// ssh://git@github.com/OWNER/NAME, each with an optional .git suffix. The URL
-// itself is never echoed in an error: it can carry a credential.
+// ssh://git@github.com/OWNER/NAME, each with an optional .git suffix. The host
+// match is case-insensitive. The URL itself is never echoed in an error: it
+// can carry a credential.
 func parseGitHubURL(u string) (string, error) {
-	if rest, ok := strings.CutPrefix(u, "git@github.com:"); ok {
+	if host, rest, ok := scpForm(u); ok {
+		if !strings.EqualFold(host, "github.com") {
+			return "", fmt.Errorf("the origin remote is not a GitHub remote")
+		}
 		return cleanSlug(rest)
 	}
 	p, err := url.Parse(u)
 	if err != nil {
 		return "", fmt.Errorf("the origin remote URL did not parse")
 	}
-	if (p.Scheme == "https" || p.Scheme == "ssh") && p.Hostname() == "github.com" {
+	if (p.Scheme == "https" || p.Scheme == "ssh") && strings.EqualFold(p.Hostname(), "github.com") {
 		return cleanSlug(strings.TrimPrefix(p.Path, "/"))
 	}
 	return "", fmt.Errorf("the origin remote is not a GitHub https or ssh URL")
 }
 
+// scpForm parses the scp-like remote form user@host:path, which url.Parse
+// cannot read: the colon before any slash makes it an invalid opaque URL.
+func scpForm(u string) (host, rest string, ok bool) {
+	if strings.Contains(u, "://") {
+		return "", "", false
+	}
+	i := strings.Index(u, "@")
+	if i < 0 {
+		return "", "", false
+	}
+	j := strings.Index(u[i+1:], ":")
+	if j < 0 {
+		return "", "", false
+	}
+	host = u[i+1 : i+1+j]
+	if host == "" || strings.Contains(host, "/") {
+		return "", "", false
+	}
+	return host, u[i+1+j+1:], true
+}
+
 func cleanSlug(s string) (string, error) {
 	s = strings.TrimSuffix(strings.TrimSuffix(s, "/"), ".git")
-	if !repoRE.MatchString(s) {
+	if !slugOK(s) {
 		return "", fmt.Errorf("the origin remote path is not OWNER/NAME")
 	}
 	return s, nil

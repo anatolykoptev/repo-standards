@@ -63,6 +63,21 @@ OWNER/NAME for the security-advisory links from `--repo` or the origin
 remote. A private repository takes `--holder` for the proprietary LICENCE.
 `--dry-run` reports what would be created and writes nothing.
 
+A repository that already has issue templates — a file under
+`.github/ISSUE_TEMPLATE/` or a legacy `ISSUE_TEMPLATE.md` — keeps them:
+init never replaces the issue intake. The accepted spellings for every
+generated file are the check's own list, so init never reports `kept` for a
+file the check would reject.
+
+`repo-standards index` maintains the generated index afterwards: it appends
+a docs/INDEX.md row for every tracked document the `index-link` rule reports
+as unindexed, without rewriting or reordering existing rows. Run it after
+adding the documents init leaves for a human — init says so itself.
+
+```sh
+repo-standards index .
+```
+
 ## Use it in CI
 
 The check is a composite action. Add it as a step in your own job, so you choose

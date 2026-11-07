@@ -32,6 +32,7 @@ const usage = `usage:
   repo-standards init  [--visibility public|private] [--detected public|private]
                        [--holder NAME] [--year YYYY] [--license apache-2.0|mit]
                        [--repo OWNER/NAME] [--dry-run] [path]
+  repo-standards index [--dry-run] [path]
   repo-standards denylist-gen [--in FILE] [--out FILE]
 
 check prints one line per finding and exits 1 if there are any.
@@ -42,6 +43,10 @@ may only be as strict or stricter. With neither flag the rule set is public.
 init writes the boilerplate documents the check requires, only where they are
 missing, then lists the required files that remain for a human to write.
 --dry-run reports what would be created and writes nothing.
+
+index appends a docs/INDEX.md row for every tracked document the index-link
+rule reports as unindexed; with no docs/INDEX.md it generates the index whole.
+--dry-run reports what would be appended and writes nothing.
 Exit codes: 0 clean, 1 findings, 2 usage or I/O error, 3 internal error.
 `
 
@@ -71,6 +76,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runCheck(args[1:], stdout, stderr)
 	case "init":
 		return runInit(args[1:], stdout, stderr)
+	case "index":
+		return runIndex(args[1:], stdout, stderr)
 	case "denylist-gen":
 		return runGen(args[1:], stdout, stderr)
 	default:
@@ -181,18 +188,49 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		Root: root, Visibility: v, Holder: *holder, Year: *year,
 		License: *license, Repo: *repo, DryRun: *dryRun,
 	})
+	for _, l := range res.Lines {
+		fmt.Fprintln(stdout, l)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "repo-standards:", err)
 		return exitUsage
-	}
-	for _, l := range res.Lines {
-		fmt.Fprintln(stdout, l)
 	}
 	if res.NotGit {
 		fmt.Fprintln(stderr, "repo-standards: not a git work tree: every file was scanned, not only tracked ones")
 	}
 	for _, f := range res.Missing {
 		fmt.Fprintln(stdout, f)
+	}
+	if res.Hint != "" {
+		fmt.Fprintln(stdout, res.Hint)
+	}
+	return exitOK
+}
+
+func runIndex(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("index", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dryRun := fs.Bool("dry-run", false, "report what would be appended, write nothing")
+	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+	root := "."
+	if fs.NArg() > 1 {
+		fmt.Fprint(stderr, usage)
+		return exitUsage
+	} else if fs.NArg() == 1 {
+		root = fs.Arg(0)
+	}
+	res, err := initfiles.UpdateIndex(initfiles.IndexOptions{Root: root, DryRun: *dryRun})
+	for _, l := range res.Lines {
+		fmt.Fprintln(stdout, l)
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "repo-standards:", err)
+		return exitUsage
+	}
+	if res.NotGit {
+		fmt.Fprintln(stderr, "repo-standards: not a git work tree: every file was scanned, not only tracked ones")
 	}
 	return exitOK
 }
