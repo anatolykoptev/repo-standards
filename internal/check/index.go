@@ -17,30 +17,62 @@ var (
 	schemeRE     = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
 )
 
-// stripCode removes fenced blocks and inline code spans: a path mentioned in
-// code is not a link. Every input line yields exactly one output line, so line
-// numbers in the result are line numbers in the input.
+// stripCode removes fenced blocks, inline code spans and HTML comments: a path
+// mentioned in code, or hidden in a comment nobody can see, is not a link.
+// Every input line yields exactly one output line, so line numbers in the
+// result are line numbers in the input.
+//
+// A comment may span lines. One that is never closed runs to the end of the
+// document, as in CommonMark, so everything after it is hidden. A `<!--` inside
+// a code span or fence is code, not a comment, and a fence marker inside a
+// comment is comment text.
 func stripCode(md string) string {
 	var b strings.Builder
 	fence := ""
+	inComment := false
 	for _, line := range strings.Split(md, "\n") {
 		t := strings.TrimLeft(line, " ")
-		if fence == "" {
-			if strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
-				fence = t[:3]
-				b.WriteByte('\n')
-				continue
+		switch {
+		case fence != "":
+			if strings.HasPrefix(t, fence) {
+				fence = ""
 			}
-			b.WriteString(codeSpanRE.ReplaceAllString(line, ""))
-			b.WriteByte('\n')
-		} else if strings.HasPrefix(t, fence) {
-			fence = ""
-			b.WriteByte('\n')
-		} else {
-			b.WriteByte('\n')
+		case !inComment && (strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")):
+			fence = t[:3]
+		default:
+			if !inComment {
+				line = codeSpanRE.ReplaceAllString(line, "")
+			}
+			line, inComment = stripComments(line, inComment)
+			b.WriteString(line)
 		}
+		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// stripComments removes the HTML comment text from one line. inComment says
+// whether the line starts inside a comment; the result says whether it ends
+// inside one.
+func stripComments(line string, inComment bool) (string, bool) {
+	var out strings.Builder
+	for {
+		if inComment {
+			i := strings.Index(line, "-->")
+			if i < 0 {
+				return out.String(), true
+			}
+			line, inComment = line[i+3:], false
+			continue
+		}
+		i := strings.Index(line, "<!--")
+		if i < 0 {
+			out.WriteString(line)
+			return out.String(), false
+		}
+		out.WriteString(line[:i])
+		line, inComment = line[i+4:], true
+	}
 }
 
 // linkRef is one in-repo link: the repo-root-relative path it resolves to and
@@ -163,8 +195,9 @@ func checkIndex(files []string, set map[string]bool, content map[string][]byte, 
 // checkIndexDeadLinks reports every in-repo link in docs/INDEX.md whose target
 // is neither a tracked file nor a directory holding one. The index is the
 // agent entrypoint: a row for a moved file reads as true and leads nowhere.
-// The #fragment is not validated, and a link that leaves the repository cannot
-// be judged from the tracked set, so it is skipped like an external URL.
+// The #fragment is not validated. A target that climbs above the repository
+// root is not a tracked file and no host resolves it, so it is dead too: a
+// miscounted "../" is the likeliest typo.
 func checkIndexDeadLinks(files []string, content map[string][]byte) []Finding {
 	data, ok := content[indexPath]
 	if !ok {
@@ -173,7 +206,12 @@ func checkIndexDeadLinks(files []string, content map[string][]byte) []Finding {
 	live := trackedPaths(files)
 	var out []Finding
 	for _, l := range linkRefs(string(data), path.Dir(indexPath)) {
-		if l.path == ".." || strings.HasPrefix(l.path, "../") || live[l.path] {
+		if l.path == ".." || strings.HasPrefix(l.path, "../") {
+			out = append(out, Finding{Check: IndexDeadLink, Path: indexPath, Line: l.line,
+				Msg: "link target " + l.path + " leaves the repository"})
+			continue
+		}
+		if live[l.path] {
 			continue
 		}
 		out = append(out, Finding{Check: IndexDeadLink, Path: indexPath, Line: l.line,

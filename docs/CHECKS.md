@@ -41,8 +41,11 @@ name. Two earlier failures shaped this:
 Recognised forms: inline links, reference definitions, `href` attributes,
 `./` and `../` segments, `#fragment` and `?query` suffixes, percent-encoding,
 angle-bracket targets, link titles, and root-relative `/docs/x.md`. External
-URLs are ignored. Fenced code blocks and inline code spans are removed first, so
-a path in code is not a link.
+URLs are ignored. Fenced code blocks, inline code spans and HTML comments
+(`<!-- ... -->`, also across lines) are removed first, so a path in code or in a
+comment is not a link. A comment that is never closed hides the rest of the
+document, as in CommonMark. A `<!--` inside code is code, and a fence marker
+inside a comment is comment text.
 
 Required targets: every tracked `.md` under `docs/` other than INDEX.md, plus the
 root documents (README.md, CLAUDE.md, CHANGELOG.md, CONTRIBUTING.md,
@@ -58,8 +61,9 @@ Every in-repo link in INDEX.md must resolve, exactly as above, to a tracked file
 or to a directory that is a prefix of a tracked file (`../src/` is fine). A row
 for a moved or deleted file reads as true and sends the agent to nothing. The
 finding carries the INDEX line number. The `#fragment` is not validated. A link
-that leaves the repository (`../../x`) cannot be judged from the tracked set and
-is skipped, like an external URL.
+that climbs above the repository root (`../../x` from docs/, `/../x`,
+`%2e%2e/%2e%2e/x`) is not a tracked file and no host resolves it, so it is dead
+too, reported as "leaves the repository". A miscounted `../` is the likeliest typo.
 
 ## CLAUDE.md: `claude-index`
 

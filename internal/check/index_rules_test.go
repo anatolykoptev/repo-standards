@@ -68,7 +68,6 @@ func TestIndexDeadLinks(t *testing.T) {
 			"- [dots](./sub/../up.md) [more](sub/./inner.md)\n" +
 			"- [root](../)\n" +
 			"- [external](https://example.com/gone.md) [mail](mailto:a@example.com)\n" +
-			"- [outside](../../elsewhere.md)\n" +
 			"- [dead file](gone.md)\n" +
 			"- [dead dir](nowhere/)\n" +
 			"- [dead encoded](no%20such%20file.md#x)\n" +
@@ -157,5 +156,71 @@ func TestClaudeIndexSilentWhenClaudeMDMissing(t *testing.T) {
 		if strings.HasPrefix(g, ClaudeIndex) {
 			t.Fatalf("missing CLAUDE.md is one missing-file finding, got %v", got)
 		}
+	}
+}
+
+func TestIndexDeadLinkLeavingRepo(t *testing.T) {
+	for _, target := range []string{"../../README.md", "../..", "/../x.md", "%2e%2e/%2e%2e/x.md"} {
+		files := with(goodFiles(Public), map[string]string{"docs/INDEX.md": idxWith("- [up](" + target + ")\n")})
+		got := findingsOf(run(t, writeRepo(t, files), Public, nil), IndexDeadLink)
+		if len(got) != 1 || got[0].Line != 10 || !strings.Contains(got[0].Msg, "leaves the repository") {
+			t.Errorf("%s: got %v", target, got)
+		}
+	}
+	// One level up from docs/ is the root: live.
+	files := with(goodFiles(Public), map[string]string{"docs/INDEX.md": idxWith("- [root file](../README.md) [root](..)\n")})
+	if got := findingsOf(run(t, writeRepo(t, files), Public, nil), IndexDeadLink); len(got) != 0 {
+		t.Errorf("in-repo ../ must pass: %v", got)
+	}
+}
+
+func TestHTMLCommentsAreNotLinks(t *testing.T) {
+	claude := func(body string) []Finding {
+		files := with(goodFiles(Public), map[string]string{"CLAUDE.md": prose("Agent notes", 4) + "\n" + body + "\n"})
+		return findingsOf(run(t, writeRepo(t, files), Public, nil), ClaudeIndex)
+	}
+	cases := []struct {
+		name, body string
+		ok         bool
+	}{
+		{"single-line comment", "<!-- [i](docs/INDEX.md) -->", false},
+		{"multi-line comment", "<!--\nnotes\n[i](docs/INDEX.md)\n-->", false},
+		{"unclosed comment hides the rest", "<!-- open\n[i](docs/INDEX.md)", false},
+		{"link after a comment on the same line", "<!-- x --> [i](docs/INDEX.md)", true},
+		{"link after a multi-line comment close", "<!--\nx\n--> [i](docs/INDEX.md)", true},
+		{"comment marker in a code span is code", "`<!--` [i](docs/INDEX.md)", true},
+		{"comment marker in a fence is code", "```\n<!--\n```\n[i](docs/INDEX.md)", true},
+		{"fence marker in a comment is text", "<!--\n```\n-->\n[i](docs/INDEX.md)", true},
+	}
+	for _, c := range cases {
+		got := claude(c.body)
+		if c.ok && len(got) != 0 {
+			t.Errorf("%s: want pass, got %v", c.name, got)
+		}
+		if !c.ok && len(got) != 1 {
+			t.Errorf("%s: want one finding, got %v", c.name, got)
+		}
+	}
+}
+
+func TestIndexRowInCommentDoesNotIndex(t *testing.T) {
+	files := with(goodFiles(Public), map[string]string{
+		"docs/hidden.md": prose("hidden", 3),
+		"docs/INDEX.md":  idxWith("<!-- - [Hidden](hidden.md) -->\n"),
+	})
+	got := ids(run(t, writeRepo(t, files), Public, nil))
+	if want := []string{IndexLink + " docs/hidden.md"}; !equal(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+func TestLineNumbersSurviveMultiLineComment(t *testing.T) {
+	// goodFiles INDEX is 9 lines; the comment spans lines 10-13.
+	files := with(goodFiles(Public), map[string]string{
+		"docs/INDEX.md": idxWith("<!--\nold\n[x](gone.md)\n--> [after](dead.md)\n- [next](dead2.md)\n"),
+	})
+	got := findingsOf(run(t, writeRepo(t, files), Public, nil), IndexDeadLink)
+	if len(got) != 2 || got[0].Line != 13 || got[1].Line != 14 {
+		t.Fatalf("want dead links on lines 13 and 14 only, got %v", got)
 	}
 }
