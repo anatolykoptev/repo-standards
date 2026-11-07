@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/anatolykoptev/repo-standards/compare/v0.1.0...v0.2.0) (2026-11-07)
+
+
+### Added
+
+* index nested CLAUDE.md, dead INDEX links, CLAUDE.md-to-INDEX chain ([#2](https://github.com/anatolykoptev/repo-standards/issues/2)) ([dd691db](https://github.com/anatolykoptev/repo-standards/commit/dd691db0acb16a0774afbfb74ef378c576ecbbed))
+
 ## 0.1.0 (2026-11-07)
 
 
