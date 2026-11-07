@@ -1,0 +1,31 @@
+name: release-please
+
+# Conventional-commit-driven versioning: opens a release PR on every push to main;
+# merging the release PR cuts the tag and creates the GitHub Release.
+#
+# Auth: the default GITHUB_TOKEN. The repository setting "Allow GitHub Actions to
+# create and approve pull requests" must be on. A PR created this way does not
+# trigger other workflows, so the release PR gets no CI run until a maintainer
+# pushes to it or closes and reopens it.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  release-please:
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

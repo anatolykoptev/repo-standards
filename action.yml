@@ -1,0 +1,60 @@
+name: repo-standards
+description: Check a repository for the standard project documents and, if public, for personal data.
+author: anatolykoptev
+
+inputs:
+  visibility:
+    description: >-
+      Optional override: public or private. The visibility is read from the
+      event (github.event.repository.private); an override that is less strict
+      than the real visibility is an error. Leave empty.
+    required: false
+    default: ''
+  history:
+    description: 'Also scan the text of git log -p --all (public repositories). Needs fetch-depth: 0 in checkout.'
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    # The tool is built from github.action_path, the checkout of exactly the ref
+    # the caller pinned in `uses:`; there is no second version string to drift.
+    - name: Read the Go version
+      id: gover
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        v=$(awk '/^go /{print $2; exit}' "$ACTION_PATH/go.mod")
+        [ -n "$v" ] || { echo "::error::no go directive in go.mod"; exit 1; }
+        echo "version=$v" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/setup-go@v6
+      with:
+        go-version: ${{ steps.gover.outputs.version }}
+        cache: false
+
+    - name: Build
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        GOWORK: 'off'
+      run: cd "$ACTION_PATH" && go build -o "$RUNNER_TEMP/repo-standards" ./cmd/repo-standards
+
+    - name: Check
+      shell: bash
+      env:
+        DECLARED: ${{ inputs.visibility }}
+        PRIVATE: ${{ github.event.repository.private }}
+        HISTORY: ${{ inputs.history }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        args=(check)
+        case "$PRIVATE" in
+          true) args+=(--detected private) ;;
+          false) args+=(--detected public) ;;
+        esac
+        [ -z "$DECLARED" ] || args+=(--visibility "$DECLARED")
+        [ "$HISTORY" != true ] || args+=(--history)
+        "$RUNNER_TEMP/repo-standards" "${args[@]}" "$WORKSPACE"
