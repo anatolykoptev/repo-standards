@@ -18,13 +18,20 @@ The same list applies to public and private repositories.
 | CODE_OF_CONDUCT.md | 150 |
 | .gitignore | at least one non-comment pattern |
 | docs/INDEX.md | 60 |
+| .github/pull_request_template.md, .github/PULL_REQUEST_TEMPLATE.md, pull_request_template.md or docs/pull_request_template.md | 30 |
+| .github/ISSUE_TEMPLATE/ holds at least one .yml, .yaml or .md file other than config.yml | 30 |
+
+The issue-template directory is satisfied by a file directly inside it; a
+config.yml or config.yaml is the chooser configuration, not a template, and
+files in subdirectories do not count.
 
 A missing file is `missing-file`. A file below its minimum, a file that is not a
 regular file (a symlink is not followed), or a file with a template placeholder
 is `stub-file`. Placeholders are: a TODO or TBD marker as a whole word, the
 classic filler paragraph, an unfilled bracketed template field such as the
 contact field of the Contributor Covenant, and sentences such as "project
-description here". Licence texts and .gitignore skip the placeholder scan.
+description here". Licence texts, .gitignore and issue templates skip the
+placeholder scan (an issue template is itself fill-in scaffolding).
 
 ## docs/INDEX.md
 

@@ -11,7 +11,7 @@ project-maturity bar this tool enforces.
 
 | Check id | Rule |
 |---|---|
-| `missing-file` | README.md, CLAUDE.md, CHANGELOG.md, LICENSE (or LICENSE.md / LICENSE.txt), CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, .gitignore and docs/INDEX.md exist as tracked files |
+| `missing-file` | README.md, CLAUDE.md, CHANGELOG.md, LICENSE (or LICENSE.md / LICENSE.txt), CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, .gitignore, docs/INDEX.md, a pull-request template and at least one issue template under .github/ exist as tracked files |
 | `stub-file` | Each is above a minimum size and carries no template placeholder |
 | `index-link` | docs/INDEX.md links, by link target, every tracked `.md` under `docs/`, every root document and every nested `CLAUDE.md` (outside `vendor/` and `node_modules/`) |
 | `index-dead-link` | An in-repo link in docs/INDEX.md points at nothing: not a tracked file, not a directory holding one |

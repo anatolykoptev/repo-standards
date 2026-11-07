@@ -52,6 +52,66 @@ func TestMissingIndexIsOneFinding(t *testing.T) {
 	}
 }
 
+// F5: a repo missing .github/pull_request_template.md or any issue template
+// gets a missing-file finding.
+func TestMissingTemplateFiles(t *testing.T) {
+	for _, c := range []struct {
+		name, file, want string
+	}{
+		{"pull request template", ".github/pull_request_template.md", MissingFile + " .github/pull_request_template.md"},
+		{"issue template dir", ".github/ISSUE_TEMPLATE/bug_report.yml", MissingFile + " .github/ISSUE_TEMPLATE/"},
+	} {
+		root := writeRepo(t, without(goodFiles(Public), c.file))
+		got := ids(run(t, root, Public, nil))
+		if !equal(got, []string{c.want}) {
+			t.Errorf("%s: got %v want [%s]", c.name, got, c.want)
+		}
+	}
+}
+
+func TestPullRequestTemplateSpellings(t *testing.T) {
+	for _, name := range []string{".github/PULL_REQUEST_TEMPLATE.md", "pull_request_template.md", "docs/pull_request_template.md"} {
+		files := without(goodFiles(Public), ".github/pull_request_template.md")
+		files[name] = prose("Pull request", 1)
+		// A template under docs/ is a docs page: the index must link it.
+		if strings.HasPrefix(name, "docs/") {
+			files["docs/INDEX.md"] += "- [PR template](pull_request_template.md)\n"
+		}
+		if fs := run(t, writeRepo(t, files), Public, nil); len(fs) != 0 {
+			t.Errorf("%s: %v", name, fs)
+		}
+	}
+}
+
+func TestIssueTemplateDir(t *testing.T) {
+	cases := []struct {
+		name string
+		set  map[string]string // replaces the whole ISSUE_TEMPLATE dir contents
+		want []string
+	}{
+		{"config only", map[string]string{".github/ISSUE_TEMPLATE/config.yml": "blank_issues_enabled: false\n"},
+			[]string{MissingFile + " .github/ISSUE_TEMPLATE/"}},
+		{"config.yaml is not a template", map[string]string{".github/ISSUE_TEMPLATE/config.yml": "x: y\n", ".github/ISSUE_TEMPLATE/config.yaml": strings.Repeat("x", 40)},
+			[]string{MissingFile + " .github/ISSUE_TEMPLATE/"}},
+		{"markdown template", map[string]string{".github/ISSUE_TEMPLATE/question.md": prose("question", 1)}, nil},
+		{"yaml template", map[string]string{".github/ISSUE_TEMPLATE/feature.yaml": "name: Feature\ndescription: d\nbody: []\n"}, nil},
+		{"nested file does not count", map[string]string{".github/ISSUE_TEMPLATE/nested/x.md": prose("x", 1)},
+			[]string{MissingFile + " .github/ISSUE_TEMPLATE/"}},
+		{"tiny template is a stub", map[string]string{".github/ISSUE_TEMPLATE/a.yml": "x\n"},
+			[]string{StubFile + " .github/ISSUE_TEMPLATE/a.yml"}},
+	}
+	for _, c := range cases {
+		files := without(goodFiles(Public), ".github/ISSUE_TEMPLATE/bug_report.yml", ".github/ISSUE_TEMPLATE/config.yml")
+		for k, v := range c.set {
+			files[k] = v
+		}
+		got := ids(run(t, writeRepo(t, files), Public, nil))
+		if !equal(got, c.want) {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestLicenseSpellings(t *testing.T) {
 	for _, name := range []string{"LICENSE.md", "LICENSE.txt"} {
 		files := without(goodFiles(Public), "LICENSE")

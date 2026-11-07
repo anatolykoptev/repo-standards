@@ -27,14 +27,17 @@ func goodFiles(vis Visibility) map[string]string {
 		lic = propText
 	}
 	return map[string]string{
-		"README.md":          prose("Readme", 6),
-		"CLAUDE.md":          prose("Agent notes", 4) + "\nAll docs: [index](docs/INDEX.md).\n",
-		"CHANGELOG.md":       "# Changelog\n\nNothing released yet.\n",
-		"LICENSE":            lic,
-		"CONTRIBUTING.md":    prose("Contributing", 4),
-		"SECURITY.md":        prose("Security", 4),
-		"CODE_OF_CONDUCT.md": prose("Code of conduct", 5),
-		".gitignore":         "bin/\n",
+		"README.md":                             prose("Readme", 6),
+		"CLAUDE.md":                             prose("Agent notes", 4) + "\nAll docs: [index](docs/INDEX.md).\n",
+		"CHANGELOG.md":                          "# Changelog\n\nNothing released yet.\n",
+		"LICENSE":                               lic,
+		"CONTRIBUTING.md":                       prose("Contributing", 4),
+		"SECURITY.md":                           prose("Security", 4),
+		"CODE_OF_CONDUCT.md":                    prose("Code of conduct", 5),
+		".gitignore":                            "bin/\n",
+		".github/pull_request_template.md":      prose("Pull request", 1),
+		".github/ISSUE_TEMPLATE/bug_report.yml": "name: Bug report\ndescription: report a bug\nbody: []\n",
+		".github/ISSUE_TEMPLATE/config.yml":     "blank_issues_enabled: false\n",
 		"docs/INDEX.md": "# Index\n\n" +
 			"- [Readme](../README.md)\n- [Agent notes](../CLAUDE.md)\n- [Changelog](../CHANGELOG.md)\n" +
 			"- [Licence](../LICENSE)\n- [Contributing](../CONTRIBUTING.md)\n- [Security](../SECURITY.md)\n" +
