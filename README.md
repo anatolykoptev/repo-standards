@@ -43,6 +43,26 @@ and later deleted is still found.
 Exit codes: 0 clean, 1 findings, 2 usage or I/O error, 3 internal error.
 The run ends with `skipped N binary files, suppressed M finding(s)` on stderr.
 
+## Scaffold the documents
+
+`init` writes the boilerplate the check requires — the code of conduct, the
+security policy, the licence, the issue and pull-request templates and
+docs/INDEX.md — where each is missing, and never touches a file that exists.
+It then lists the required documents that remain for a human: README.md,
+CLAUDE.md, CONTRIBUTING.md, CHANGELOG.md and .gitignore are never written,
+because they must come from the project's real code and history.
+
+```sh
+repo-standards init --visibility public --license apache-2.0 --repo OWNER/NAME .
+```
+
+The visibility flags are the same as `check`'s. A public repository takes
+`--license apache-2.0` or `--license mit` (choosing a licence is the owner's
+decision; without one LICENSE is skipped, not guessed) and resolves
+OWNER/NAME for the security-advisory links from `--repo` or the origin
+remote. A private repository takes `--holder` for the proprietary LICENCE.
+`--dry-run` reports what would be created and writes nothing.
+
 ## Use it in CI
 
 The check is a composite action. Add it as a step in your own job, so you choose

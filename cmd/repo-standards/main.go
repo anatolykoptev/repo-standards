@@ -14,6 +14,7 @@ import (
 
 	"github.com/anatolykoptev/repo-standards/internal/check"
 	"github.com/anatolykoptev/repo-standards/internal/denylist"
+	"github.com/anatolykoptev/repo-standards/internal/initfiles"
 )
 
 const (
@@ -28,12 +29,19 @@ const (
 const usage = `usage:
   repo-standards check [--visibility public|private] [--detected public|private]
                        [--denylist FILE] [--history] [path]
+  repo-standards init  [--visibility public|private] [--detected public|private]
+                       [--holder NAME] [--year YYYY] [--license apache-2.0|mit]
+                       [--repo OWNER/NAME] [--dry-run] [path]
   repo-standards denylist-gen [--in FILE] [--out FILE]
 
 check prints one line per finding and exits 1 if there are any.
 --detected is the visibility the environment reports; it wins, and --visibility
 may only be as strict or stricter. With neither flag the rule set is public.
 --history scans the text of git log -p --all instead of the work tree.
+
+init writes the boilerplate documents the check requires, only where they are
+missing, then lists the required files that remain for a human to write.
+--dry-run reports what would be created and writes nothing.
 Exit codes: 0 clean, 1 findings, 2 usage or I/O error, 3 internal error.
 `
 
@@ -61,6 +69,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "check":
 		return runCheck(args[1:], stdout, stderr)
+	case "init":
+		return runInit(args[1:], stdout, stderr)
 	case "denylist-gen":
 		return runGen(args[1:], stdout, stderr)
 	default:
@@ -138,6 +148,51 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	if len(res.Findings) > 0 {
 		fmt.Fprintf(stderr, "repo-standards: %d finding(s)\n", len(res.Findings))
 		return exitViolation
+	}
+	return exitOK
+}
+
+func runInit(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	vis := fs.String("visibility", "", "public or private (see --detected)")
+	detected := fs.String("detected", "", "visibility reported by the environment; overrides --visibility")
+	holder := fs.String("holder", "", "copyright holder for a generated LICENSE")
+	year := fs.String("year", "", "copyright year or range for a generated LICENSE (default: current year)")
+	license := fs.String("license", "", "licence text for a public repository: apache-2.0 or mit")
+	repo := fs.String("repo", "", "GitHub OWNER/NAME for the security advisory links (default: the origin remote)")
+	dryRun := fs.Bool("dry-run", false, "report what would be created, write nothing")
+	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+	root := "."
+	if fs.NArg() > 1 {
+		fmt.Fprint(stderr, usage)
+		return exitUsage
+	} else if fs.NArg() == 1 {
+		root = fs.Arg(0)
+	}
+	v, err := check.ResolveVisibility(*vis, *detected)
+	if err != nil {
+		fmt.Fprintln(stderr, "repo-standards:", err)
+		return exitUsage
+	}
+	res, err := initfiles.Run(initfiles.Options{
+		Root: root, Visibility: v, Holder: *holder, Year: *year,
+		License: *license, Repo: *repo, DryRun: *dryRun,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, "repo-standards:", err)
+		return exitUsage
+	}
+	for _, l := range res.Lines {
+		fmt.Fprintln(stdout, l)
+	}
+	if res.NotGit {
+		fmt.Fprintln(stderr, "repo-standards: not a git work tree: every file was scanned, not only tracked ones")
+	}
+	for _, f := range res.Missing {
+		fmt.Fprintln(stdout, f)
 	}
 	return exitOK
 }

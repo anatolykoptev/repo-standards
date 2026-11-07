@@ -17,10 +17,45 @@ func do(args ...string) (code int, out, errOut string) {
 }
 
 func TestUsageErrors(t *testing.T) {
-	for _, args := range [][]string{{}, {"bogus"}, {"check", "--visibility", "internal", t.TempDir()}, {"check", "a", "b"}} {
+	for _, args := range [][]string{{}, {"bogus"}, {"check", "--visibility", "internal", t.TempDir()}, {"check", "a", "b"},
+		{"init", "--visibility", "internal", t.TempDir()}, {"init", "--license", "bogus", t.TempDir()},
+		{"init", "--year", "20x6", t.TempDir()}, {"init", "a", "b"}} {
 		if code, _, _ := do(args...); code != exitUsage {
 			t.Errorf("%v: exit %d", args, code)
 		}
+	}
+}
+
+func TestInitRun(t *testing.T) {
+	dir := t.TempDir()
+	code, out, e := do("init", "--visibility", "private", "--holder", "Zzq Holder", dir)
+	if code != exitOK || !strings.Contains(out, "created SECURITY.md") || !strings.Contains(out, "[missing-file]") {
+		t.Fatalf("%d\n%s\n%s", code, out, e)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "SECURITY.md")); err != nil {
+		t.Fatal("SECURITY.md not written")
+	}
+	// The visibility rule is the same as check's: private cannot be declared
+	// for a repo detected as public.
+	if code, _, e := do("init", "--visibility", "private", "--detected", "public", dir); code != exitUsage || !strings.Contains(e, "less strict") {
+		t.Fatalf("init visibility rule: %d %q", code, e)
+	}
+	// --dry-run reports and writes nothing.
+	dir2 := t.TempDir()
+	code, out, _ = do("init", "--visibility", "private", "--holder", "Zzq", "--dry-run", dir2)
+	if code != exitOK || !strings.Contains(out, "would create SECURITY.md") {
+		t.Fatalf("%d %q", code, out)
+	}
+	if ents, _ := os.ReadDir(dir2); len(ents) != 0 {
+		t.Fatalf("dry-run wrote %v", ents)
+	}
+	// A public repo without --repo or a GitHub origin fails before writing.
+	dir3 := t.TempDir()
+	if code, _, e := do("init", "--visibility", "public", "--holder", "Zzq", "--license", "mit", dir3); code != exitUsage || !strings.Contains(e, "--repo") {
+		t.Fatalf("public init without repo: %d %q", code, e)
+	}
+	if ents, _ := os.ReadDir(dir3); len(ents) != 0 {
+		t.Fatalf("failed init wrote %v", ents)
 	}
 }
 
