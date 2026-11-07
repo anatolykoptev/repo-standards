@@ -90,6 +90,8 @@ func Run(opts Options) (Result, error) {
 
 	out := checkRequired(opts.Root, files, set, content)
 	out = append(out, checkIndex(files, set, content, rootDocs)...)
+	out = append(out, checkIndexDeadLinks(files, content)...)
+	out = append(out, checkClaudeIndex(content)...)
 	for _, r := range requirements {
 		if r.names[0] != "LICENSE" {
 			continue

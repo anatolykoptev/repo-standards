@@ -28,7 +28,7 @@ func goodFiles(vis Visibility) map[string]string {
 	}
 	return map[string]string{
 		"README.md":          prose("Readme", 6),
-		"CLAUDE.md":          prose("Agent notes", 4),
+		"CLAUDE.md":          prose("Agent notes", 4) + "\nAll docs: [index](docs/INDEX.md).\n",
 		"CHANGELOG.md":       "# Changelog\n\nNothing released yet.\n",
 		"LICENSE":            lic,
 		"CONTRIBUTING.md":    prose("Contributing", 4),

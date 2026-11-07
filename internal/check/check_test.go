@@ -3,6 +3,7 @@ package check
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -28,9 +29,14 @@ func TestRequiredMissingEach(t *testing.T) {
 		for _, vis := range []Visibility{Public, Private} {
 			root := writeRepo(t, without(goodFiles(vis), name))
 			got := ids(run(t, root, vis, nil))
-			// A missing root doc is a missing-file; INDEX.md still links it,
-			// which is not a finding (dead links are out of scope).
+			// A missing root doc is a missing-file, and the INDEX row that
+			// links it is now a dead link. The licence and .gitignore rows differ.
 			want := []string{MissingFile + " " + name}
+			if name != ".gitignore" {
+				want = append(want, IndexDeadLink+" docs/INDEX.md")
+			}
+			sort.Strings(want)
+			sort.Strings(got)
 			if !equal(got, want) {
 				t.Errorf("%s without %s: got %v want %v", vis, name, got, want)
 			}
@@ -221,7 +227,7 @@ func TestOnlyTrackedFilesCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := ids(run(t, root, Public, nil))
-	if want := []string{MissingFile + " SECURITY.md"}; !equal(got, want) {
+	if want := []string{MissingFile + " SECURITY.md", IndexDeadLink + " docs/INDEX.md"}; !equal(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
 }
@@ -236,7 +242,7 @@ func TestNonGitDirectoryWalks(t *testing.T) {
 		}
 	}
 	got := ids(run(t, root, Public, nil))
-	if want := []string{MissingFile + " SECURITY.md"}; !equal(got, want) {
+	if want := []string{MissingFile + " SECURITY.md", IndexDeadLink + " docs/INDEX.md"}; !equal(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
 }

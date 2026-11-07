@@ -56,9 +56,15 @@ func toSet(items ...string) map[string]bool {
 	return m
 }
 
+// isVendored reports whether a path is third-party text under vendor/ or
+// node_modules/. The one list of such directories, shared by every check.
+func isVendored(p string) bool {
+	return hasSegment(p, "vendor") || hasSegment(p, "node_modules")
+}
+
 // skipForPII reports whether a path is out of scope for the personal-data scan.
 func skipForPII(p string) bool {
-	if hasSegment(p, "vendor") || hasSegment(p, "node_modules") {
+	if isVendored(p) {
 		return true
 	}
 	base := strings.ToLower(path.Base(p))
