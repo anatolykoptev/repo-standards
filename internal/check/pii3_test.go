@@ -258,3 +258,28 @@ func TestDenylistPublicNameContext(t *testing.T) {
 		t.Fatalf("out-of-context uses must be flagged: %v", res.Findings)
 	}
 }
+
+func TestMissingFileIgnoredByGitignore(t *testing.T) {
+	for _, vis := range []Visibility{Public, Private} {
+		files := without(goodFiles(vis), "SECURITY.md")
+		files[".gitignore"] = "bin/\nSECURITY.md\n"
+		root := writeRepo(t, files)
+		// On disk but ignored, so it is never tracked.
+		if err := os.WriteFile(filepath.Join(root, "SECURITY.md"), []byte(prose("Security", 4)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		fs := run(t, root, vis, nil)
+		var missing *Finding
+		for i := range fs {
+			if fs[i].Check == MissingFile && fs[i].Path == "SECURITY.md" {
+				missing = &fs[i]
+			}
+		}
+		if missing == nil {
+			t.Fatalf("%s: no missing-file finding: %v", vis, fs)
+		}
+		if !strings.Contains(missing.Msg, "exists but is ignored by .gitignore (line 2 of .gitignore)") {
+			t.Fatalf("%s: %q", vis, missing.Msg)
+		}
+	}
+}
