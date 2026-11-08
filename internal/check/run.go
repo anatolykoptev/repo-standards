@@ -58,8 +58,8 @@ type Result struct {
 
 // rootDocs are the root documents docs/INDEX.md must link, in addition to
 // everything under docs/.
-var rootDocs = []string{"README.md", "CLAUDE.md", "CHANGELOG.md", "CONTRIBUTING.md",
-	"SECURITY.md", "CODE_OF_CONDUCT.md", "LICENSE", "LICENSE.md", "LICENSE.txt"}
+var rootDocs = append([]string{"README.md", "CLAUDE.md", "CHANGELOG.md", "CONTRIBUTING.md",
+	"SECURITY.md", "CODE_OF_CONDUCT.md"}, licenceNames...)
 
 func validate(opts Options) error {
 	if opts.Visibility != Public && opts.Visibility != Private {
@@ -92,14 +92,9 @@ func Run(opts Options) (Result, error) {
 	out = append(out, checkIndex(files, content)...)
 	out = append(out, checkIndexDeadLinks(files, content)...)
 	out = append(out, checkClaudeIndex(content)...)
-	for _, r := range requirements {
-		if r.names[0] != "LICENSE" {
-			continue
-		}
-		if name, ok := r.found(files, set); ok {
-			if data, ok := content[name]; ok {
-				out = append(out, checkLicense(opts.Visibility, name, data)...)
-			}
+	for _, name := range licenceNames {
+		if data, ok := content[name]; ok {
+			out = append(out, checkLicense(opts.Visibility, name, data)...)
 		}
 	}
 	if opts.Visibility == Public {

@@ -25,7 +25,7 @@ var (
 	//   PolyForm Perimeter (site URL retired; text at source):
 	//     https://github.com/polyformproject/polyform-licenses/blob/1.0.0/PolyForm-Perimeter-1.0.0.md
 	//   FSL: https://fsl.software/FSL-1.1-MIT.template.md and
-	//        https://fsl.software/FSL-1.1-ALv2.template.md
+	//        https://fsl.software/FSL-1.1-ALv2.template.md (fslRE)
 	//   BSL: https://mariadb.com/bsl11/
 	// Checked before the non-OSI markers, whose broad family words
 	// ("polyform", "business source license", "noncommercial") would claim
@@ -39,10 +39,11 @@ var (
 		{"polyform free trial license", "PolyForm Free Trial"},
 		{"polyform perimeter license", "PolyForm Perimeter"},
 		{"polyform strict license", "PolyForm Strict"},
-		{"functional source license, version 1.1, mit future license", "FSL-1.1-MIT"},
-		{"functional source license, version 1.1, alv2 future license", "FSL-1.1-ALv2"},
 		{"business source license 1.1", "BSL-1.1"},
 	}
+	// fslRE matches the FSL title: the template says "ALv2 Future License",
+	// the text published at fsl.software says "Apache 2.0 Future License".
+	fslRE = regexp.MustCompile(`functional source license, version 1\.1,? (mit|alv2|apache 2\.0) future license`)
 	// nonOSIMarkers names restricted licences by their title phrase. They
 	// run before the OSI headers because these texts deliberately wrap or
 	// embed an OSI licence: Commons Clause is a rider over Apache or MIT,
@@ -59,10 +60,10 @@ var (
 	}
 	// nonCommMarkers is the generic catch-all for licences that restrict
 	// commercial use without naming a recognised licence (CC-BY-NC and
-	// friends). It runs only after every OSI header has failed: the
-	// canonical GPL-family texts legitimately contain "noncommercial
+	// friends), or that add such a rider to an OSI text. GPL-family headers
+	// are exempt: the canonical texts legitimately contain "noncommercial
 	// distribution" (GPL-2.0 §3c) and "noncommercially" (GPL-3.0 and
-	// AGPL-3.0 §6c).
+	// AGPL-3.0 §6c). The canonical MPL-2.0 text does not contain the word.
 	nonCommMarkers = []struct{ marker, name string }{
 		{"noncommercial", "non-commercial licence"},
 	}
@@ -77,8 +78,8 @@ func normalize(s string) string {
 // also appear inside the AGPL and LGPL texts as cross-references), the
 // permissive ones from their grant sentence. Order is load-bearing: named
 // source-available and restricted licences first (their texts embed or wrap
-// an OSI licence), then the OSI headers, and the generic non-commercial
-// marker only when no OSI licence claimed the text.
+// an OSI licence), then the OSI headers; the generic non-commercial marker
+// applies to every OSI text except the GPL family.
 func classifyLicense(text string) (licenseKind, string) {
 	n := normalize(text)
 	head := n
@@ -90,46 +91,75 @@ func classifyLicense(text string) (licenseKind, string) {
 			return licSourceAvail, m.name
 		}
 	}
+	if m := fslRE.FindStringSubmatch(n); m != nil {
+		if m[1] == "mit" {
+			return licSourceAvail, "FSL-1.1-MIT"
+		}
+		return licSourceAvail, "FSL-1.1-ALv2"
+	}
 	for _, m := range nonOSIMarkers {
 		if strings.Contains(n, m.marker) {
 			return licNonOSI, m.name
 		}
 	}
-	switch {
-	case strings.Contains(head, "apache license") && strings.Contains(head, "version 2.0"):
-		return licOSI, "Apache-2.0"
-	case strings.Contains(head, "mozilla public license") && strings.Contains(head, "2.0"):
-		return licOSI, "MPL-2.0"
-	case strings.Contains(head, "gnu affero general public license"):
-		return licOSI, "AGPL"
-	case strings.Contains(head, "gnu lesser general public license"),
-		strings.Contains(head, "gnu library general public license"):
-		return licOSI, "LGPL"
-	case strings.Contains(head, "gnu general public license"):
-		return licOSI, "GPL"
-	case strings.Contains(head, "eclipse public license"):
-		return licOSI, "EPL"
-	case strings.Contains(n, "permission is hereby granted, free of charge"):
-		return licOSI, "MIT"
-	case strings.Contains(n, "redistribution and use in source and binary forms"):
-		if strings.Contains(n, "neither the name of") {
-			return licOSI, "BSD-3-Clause"
+	if name := osiLicense(n, head); name != "" {
+		// A rider can sit on any OSI text; only the GPL family's own canonical
+		// texts legitimately say "noncommercial", so only they skip the marker.
+		if !strings.HasSuffix(name, "GPL") {
+			if m := nonCommMarker(n); m != "" {
+				return licNonOSI, m
+			}
 		}
-		return licOSI, "BSD-2-Clause"
-	case strings.Contains(n, "permission to use, copy, modify, and/or distribute this software for any purpose with or without fee"):
-		return licOSI, "ISC"
-	case strings.Contains(n, "this is free and unencumbered software released into the public domain"):
-		return licOSI, "Unlicense"
+		return licOSI, name
 	}
-	for _, m := range nonCommMarkers {
-		if strings.Contains(n, m.marker) {
-			return licNonOSI, m.name
-		}
+	if m := nonCommMarker(n); m != "" {
+		return licNonOSI, m
 	}
 	if proprietaryRE.MatchString(n) {
 		return licProprietary, "proprietary notice"
 	}
 	return licUnknown, ""
+}
+
+func nonCommMarker(n string) string {
+	for _, m := range nonCommMarkers {
+		if strings.Contains(n, m.marker) {
+			return m.name
+		}
+	}
+	return ""
+}
+
+// osiLicense names the OSI licence whose header or grant sentence n carries,
+// or "".
+func osiLicense(n, head string) string {
+	switch {
+	case strings.Contains(head, "apache license") && strings.Contains(head, "version 2.0"):
+		return "Apache-2.0"
+	case strings.Contains(head, "mozilla public license") && strings.Contains(head, "2.0"):
+		return "MPL-2.0"
+	case strings.Contains(head, "gnu affero general public license"):
+		return "AGPL"
+	case strings.Contains(head, "gnu lesser general public license"),
+		strings.Contains(head, "gnu library general public license"):
+		return "LGPL"
+	case strings.Contains(head, "gnu general public license"):
+		return "GPL"
+	case strings.Contains(head, "eclipse public license"):
+		return "EPL"
+	case strings.Contains(n, "permission is hereby granted, free of charge"):
+		return "MIT"
+	case strings.Contains(n, "redistribution and use in source and binary forms"):
+		if strings.Contains(n, "neither the name of") {
+			return "BSD-3-Clause"
+		}
+		return "BSD-2-Clause"
+	case strings.Contains(n, "permission to use, copy, modify, and/or distribute this software for any purpose with or without fee"):
+		return "ISC"
+	case strings.Contains(n, "this is free and unencumbered software released into the public domain"):
+		return "Unlicense"
+	}
+	return ""
 }
 
 func checkLicense(vis Visibility, name string, data []byte) []Finding {
