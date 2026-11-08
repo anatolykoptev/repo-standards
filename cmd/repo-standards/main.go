@@ -251,8 +251,8 @@ func runGen(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	in := fs.String("in", "", "plaintext list, category:token per line (default: <config>/repo-standards/denylist.txt)")
 	out := fs.String("out", defaultHashes, "hash file to write")
-	pubFile := fs.String("public-repos", "", "file of public repository names, one per line; matching tokens are dropped")
-	pubOwner := fs.String("public-owner", "", "GitHub owner whose public repositories are listed with the gh CLI; matching tokens are dropped")
+	pubFile := fs.String("public-repos", "", "file of public repository names, one per line; their tokens stay on the list but matches are suppressed inside references to the repositories themselves")
+	pubOwner := fs.String("public-owner", "", "GitHub owner whose public repositories are listed with the gh CLI; same effect as --public-repos")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -288,12 +288,12 @@ func runGen(args []string, stdout, stderr io.Writer) int {
 		}
 		old.Close()
 	}
-	exclude, err := publicNames(*pubFile, *pubOwner)
+	names, err := publicNames(*pubFile, *pubOwner)
 	if err != nil {
 		fmt.Fprintln(stderr, "repo-standards:", err)
 		return exitUsage
 	}
-	data, dropped, err := denylist.Generate(f, salt, exclude)
+	data, recorded, err := denylist.Generate(f, salt, names)
 	if err != nil {
 		fmt.Fprintln(stderr, "repo-standards:", err) // message names a line number, never a token
 		return exitUsage
@@ -303,13 +303,13 @@ func runGen(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	l, _ := denylist.Parse(bytes.NewReader(data))
-	fmt.Fprintf(stdout, "wrote %s (%d tokens); dropped %d that are public repository names (%d names known)\n",
-		*out, l.Len(), dropped, len(exclude))
+	fmt.Fprintf(stdout, "wrote %s (%d tokens); recorded %d public repository name(s)\n",
+		*out, l.Len(), recorded)
 	return exitOK
 }
 
 // publicNames loads public repository names from a file or from gh. With
-// neither flag nothing is excluded.
+// neither flag nothing is recorded.
 func publicNames(file, owner string) (map[string]bool, error) {
 	var raw []byte
 	switch {

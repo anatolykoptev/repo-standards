@@ -39,6 +39,13 @@ const MinTokenLen = 3
 // WordCategory marks entries that are banned words rather than identifiers.
 const WordCategory = "word"
 
+// PublicNameCategory marks a hash-file record that is not a denylist entry:
+// the token names a public repository. The scanner keeps matching the token
+// wherever it is a real denylist entry, but suppresses the match when the
+// token can only mean the repository itself (a github.com/<owner>/<name>
+// segment, or the repo's own name in go.mod/package.json/Cargo.toml).
+const PublicNameCategory = "public-name"
+
 // Categories a plaintext list may use.
 var categories = map[string]bool{
 	"host": true, "ssh-alias": true, "home-user": true,
@@ -49,8 +56,13 @@ var tokenRE = regexp.MustCompile(`^[a-z0-9_.@-]+$`)
 
 // List is a parsed hash file.
 type List struct {
-	salt    []byte
+	salt []byte
+	// entries maps a token hash to its category; banned words live in words
+	// instead so a token can be denylisted and banned at once, and public
+	// names live in public (they are context, not denylist entries).
 	entries map[[sha256.Size]byte]string
+	words   map[[sha256.Size]byte]bool
+	public  map[[sha256.Size]byte]bool
 }
 
 // MinEmbeddedEntries is the fewest tokens the compiled-in list may hold. A list
@@ -96,12 +108,15 @@ func Squash(s string) string {
 
 // LookupWord reports whether a squashed string is a banned word.
 func (l *List) LookupWord(squashed string) bool {
-	c, ok := l.Lookup(squashed)
-	return ok && c == WordCategory
+	if l == nil {
+		return false
+	}
+	return l.words[hash(l.salt, squashed)]
 }
 
-// Len reports how many tokens the list holds.
-func (l *List) Len() int { return len(l.entries) }
+// Len reports how many tokens the list holds: denylist entries and banned
+// words, not public-name records.
+func (l *List) Len() int { return len(l.entries) + len(l.words) }
 
 // Salt returns the list's salt.
 func (l *List) Salt() []byte { return l.salt }
@@ -122,6 +137,17 @@ func (l *List) Lookup(token string) (category string, ok bool) {
 	}
 	category, ok = l.entries[hash(l.salt, token)]
 	return category, ok
+}
+
+// IsPublicName reports whether the lowercase token names a public repository
+// recorded at generation time. The scanner suppresses such a token only in
+// repository-self references, so a hash file without public-name records
+// behaves exactly like an older one.
+func (l *List) IsPublicName(token string) bool {
+	if l == nil || len(l.public) == 0 {
+		return false
+	}
+	return l.public[hash(l.salt, token)]
 }
 
 // Parse reads a hash file.
@@ -149,17 +175,29 @@ func Parse(r io.Reader) (*List, error) {
 		if err != nil || len(sum) != sha256.Size {
 			return nil, fmt.Errorf("denylist: line %d: bad hash", n)
 		}
-		if !categories[f[0]] {
-			return nil, fmt.Errorf("denylist: line %d: unknown category %q", n, f[0])
-		}
 		var k [sha256.Size]byte
 		copy(k[:], sum)
-		l.entries[k] = f[0]
+		switch {
+		case f[0] == PublicNameCategory:
+			if l.public == nil {
+				l.public = map[[sha256.Size]byte]bool{}
+			}
+			l.public[k] = true
+		case f[0] == WordCategory:
+			if l.words == nil {
+				l.words = map[[sha256.Size]byte]bool{}
+			}
+			l.words[k] = true
+		case categories[f[0]]:
+			l.entries[k] = f[0]
+		default:
+			return nil, fmt.Errorf("denylist: line %d: unknown category %q", n, f[0])
+		}
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err
 	}
-	if len(l.entries) > 0 && l.salt == nil {
+	if l.Len()+len(l.public) > 0 && l.salt == nil {
 		return nil, fmt.Errorf("denylist: hashes without a salt line")
 	}
 	return l, nil
@@ -168,9 +206,10 @@ func Parse(r io.Reader) (*List, error) {
 // PublicNames expands the names of public repositories into the set of tokens
 // that are public by construction: the name itself, the name without a "go-"
 // prefix, and its first hyphen-separated segment (the product family:
-// "oxpulse" for "oxpulse-chat"). A denylist token in this set names something
-// already published, so it is not personal data. Names are lowercased; segments
-// shorter than MinTokenLen are ignored.
+// "oxpulse" for "oxpulse-chat"). Tokens in this set stay on the denylist —
+// they are also recorded as public-name records so the scanner can suppress
+// them only where they can mean nothing but the repository itself. Names are
+// lowercased; segments shorter than MinTokenLen are ignored.
 func PublicNames(repoNames []string) map[string]bool {
 	set := map[string]bool{}
 	add := func(t string) {
@@ -193,10 +232,12 @@ func PublicNames(repoNames []string) map[string]bool {
 
 // Generate turns a plaintext list ("category:token" per line, '#' comments)
 // into a hash file. A non-nil salt is reused so regeneration produces a
-// minimal diff; nil draws a fresh random salt. Tokens (outside the "word"
-// category) that are in exclude are dropped; the number dropped is returned,
-// never the tokens.
-func Generate(plain io.Reader, salt []byte, exclude map[string]bool) (data []byte, excluded int, err error) {
+// minimal diff; nil draws a fresh random salt. Every token in public (the
+// PublicNames set) is recorded as a public-name record — it is NOT removed
+// from the list: the scanner keeps matching it everywhere except a reference
+// that can only mean the repository itself. The number of records written is
+// returned, never the names.
+func Generate(plain io.Reader, salt []byte, public map[string]bool) (data []byte, publicRecords int, err error) {
 	if salt == nil {
 		salt = make([]byte, 16)
 		if _, err := rand.Read(salt); err != nil {
@@ -225,10 +266,6 @@ func Generate(plain io.Reader, salt []byte, exclude map[string]bool) (data []byt
 		if !tokenRE.MatchString(tok) || len(tok) < MinTokenLen {
 			return nil, 0, fmt.Errorf("plaintext line %d: token must be lowercase [a-z0-9_.@-], >= %d chars", n, MinTokenLen)
 		}
-		if cat != WordCategory && exclude[tok] {
-			excluded++
-			continue
-		}
 		hashed := tok
 		if cat == WordCategory {
 			hashed = Squash(tok)
@@ -238,15 +275,34 @@ func Generate(plain io.Reader, salt []byte, exclude map[string]bool) (data []byt
 		}
 		sum := hash(salt, hashed)
 		key := hex.EncodeToString(sum[:])
-		if seen[key] {
+		// One record per (category, token): the same token can be a denylist
+		// entry and a banned word at once.
+		if seen[cat+" "+key] {
 			continue
 		}
-		seen[key] = true
+		seen[cat+" "+key] = true
 		recs = append(recs, rec{cat, key})
 	}
 	if err := sc.Err(); err != nil {
 		return nil, 0, err
 	}
+	// Public names are appended as their own record kind. A name that cannot
+	// take part in a scan (not a token form) is skipped — the same tokens the
+	// scanner could never produce.
+	pubSeen := map[string]bool{}
+	for tok := range public {
+		if !tokenRE.MatchString(tok) || len(tok) < MinTokenLen {
+			continue
+		}
+		sum := hash(salt, tok)
+		key := hex.EncodeToString(sum[:])
+		if pubSeen[key] {
+			continue
+		}
+		pubSeen[key] = true
+		recs = append(recs, rec{PublicNameCategory, key})
+	}
+	publicRecords = len(pubSeen)
 	sort.Slice(recs, func(i, j int) bool {
 		if recs[i].cat != recs[j].cat {
 			return recs[i].cat < recs[j].cat
@@ -259,5 +315,5 @@ func Generate(plain io.Reader, salt []byte, exclude map[string]bool) (data []byt
 	for _, r := range recs {
 		fmt.Fprintf(&b, "%s %s\n", r.cat, r.sum)
 	}
-	return b.Bytes(), excluded, nil
+	return b.Bytes(), publicRecords, nil
 }
