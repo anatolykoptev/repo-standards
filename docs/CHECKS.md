@@ -99,14 +99,25 @@ which Claude Code always loads. A missing CLAUDE.md is only a `missing-file`.
 
 The text is recognised by signature phrases; the family is read from the header
 because licence titles also appear inside other licences as cross-references.
+The owner decides the licence; the check requires a recognised one.
 
-- Public: Apache-2.0, MIT, BSD-2/3-Clause, MPL-2.0, ISC, the GPL family
-  (GPL, LGPL, AGPL), EPL and the Unlicense pass. A source-available licence
-  (Commons Clause, BSL, PolyForm, Elastic, SSPL, FSL, non-commercial terms), a
-  proprietary notice or unrecognised text is a finding.
-- Private: only a proprietary notice passes,
-  `Copyright (c) <year or range> <holder>. All rights reserved.` An OSI licence
-  in a private repository is a finding.
+- Public and private accept the same set: an OSI-approved licence
+  (Apache-2.0, MIT, BSD-2/3-Clause, MPL-2.0, ISC, the GPL family — GPL, LGPL,
+  AGPL — EPL or the Unlicense), a recognised source-available licence —
+  PolyForm (Noncommercial, Small Business, Shield, Internal Use, Free Trial,
+  Perimeter or Strict), the Functional Source License (FSL-1.1-MIT or
+  FSL-1.1-ALv2) or the Business Source License 1.1 — or a proprietary notice,
+  `Copyright (c) <year or range> <holder>. All rights reserved.` A private
+  repository may carry the licence it will be published under.
+- Still a finding at either visibility: a missing LICENSE, unrecognised text,
+  or a restricted licence outside the recognised set (Commons Clause, an
+  unlisted PolyForm variant, another BSL version, Elastic, SSPL, Sustainable
+  Use or other non-commercial terms).
+
+Each source-available licence is matched by a distinctive phrase from its
+canonical text; the sources are recorded in `internal/check/license.go`. The
+match runs before the OSI phrases because the FSL embeds an MIT or Apache
+grant.
 
 ## Personal data (public repositories only)
 

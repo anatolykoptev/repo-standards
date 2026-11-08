@@ -10,13 +10,39 @@ type licenseKind int
 const (
 	licUnknown licenseKind = iota
 	licOSI
-	licNonOSI // source-available / restricted, looks open but is not OSI
+	licSourceAvail // a recognised source-available licence, accepted at either visibility
+	licNonOSI      // restricted, looks open but is neither OSI nor recognised source-available
 	licProprietary
 )
 
 var (
 	wsRE          = regexp.MustCompile(`\s+`)
 	proprietaryRE = regexp.MustCompile(`copyright (\(c\)|©) \d{4}(-\d{4})? .{2,80}?\. all rights reserved`)
+
+	// sourceAvailMarkers recognises the deliberate source-available
+	// licences by a distinctive phrase from each canonical text:
+	//   PolyForm: https://polyformproject.org/licenses/<variant>/1.0.0.txt
+	//   PolyForm Perimeter (site URL retired; text at source):
+	//     https://github.com/polyformproject/polyform-licenses/blob/1.0.0/PolyForm-Perimeter-1.0.0.md
+	//   FSL: https://fsl.software/FSL-1.1-MIT.template.md and
+	//        https://fsl.software/FSL-1.1-ALv2.template.md
+	//   BSL: https://mariadb.com/bsl11/
+	// Checked before the non-OSI markers, whose broad family words
+	// ("polyform", "business source license", "noncommercial") would claim
+	// these texts first, and before the OSI phrases, because the FSL embeds
+	// an MIT or Apache grant.
+	sourceAvailMarkers = []struct{ marker, name string }{
+		{"polyform noncommercial license", "PolyForm Noncommercial"},
+		{"polyform small business license", "PolyForm Small Business"},
+		{"polyform shield license", "PolyForm Shield"},
+		{"polyform internal use license", "PolyForm Internal Use"},
+		{"polyform free trial license", "PolyForm Free Trial"},
+		{"polyform perimeter license", "PolyForm Perimeter"},
+		{"polyform strict license", "PolyForm Strict"},
+		{"functional source license, version 1.1, mit future license", "FSL-1.1-MIT"},
+		{"functional source license, version 1.1, alv2 future license", "FSL-1.1-ALv2"},
+		{"business source license 1.1", "BSL-1.1"},
+	}
 	nonOSIMarkers = []struct{ marker, name string }{
 		{"commons clause", "Commons Clause"},
 		{"business source license", "BSL"},
@@ -42,6 +68,11 @@ func classifyLicense(text string) (licenseKind, string) {
 	head := n
 	if len(head) > 500 {
 		head = head[:500]
+	}
+	for _, m := range sourceAvailMarkers {
+		if strings.Contains(n, m.marker) {
+			return licSourceAvail, m.name
+		}
 	}
 	for _, m := range nonOSIMarkers {
 		if strings.Contains(n, m.marker) {
@@ -85,26 +116,16 @@ func checkLicense(vis Visibility, name string, data []byte) []Finding {
 	f := func(msg string) []Finding {
 		return []Finding{{Check: License, Path: name, Msg: msg}}
 	}
-	switch vis {
-	case Public:
-		switch kind {
-		case licOSI:
-			return nil
-		case licNonOSI:
-			return f("public repo carries a non-OSI licence (" + lic + "); expected an OSI-approved licence")
-		case licProprietary:
-			return f("public repo carries a proprietary notice; expected an OSI-approved licence")
-		}
-		return f("unrecognised licence text; expected an OSI-approved licence (MIT, Apache-2.0, BSD, MPL, GPL family, ISC, Unlicense, EPL)")
-	default:
-		switch kind {
-		case licProprietary:
-			return nil
-		case licOSI:
-			return f("private repo carries an OSI licence (" + lic + "); expected a proprietary notice: \"Copyright (c) <year> <holder>. All rights reserved.\"")
-		case licNonOSI:
-			return f("private repo carries a non-OSI licence (" + lic + "); expected a proprietary notice")
-		}
-		return f("unrecognised licence text; expected a proprietary notice: \"Copyright (c) <year> <holder>. All rights reserved.\"")
+	// The owner decides the licence; the check requires a recognised one.
+	// Public accepts OSI-approved, recognised source-available (PolyForm,
+	// FSL-1.1, BSL-1.1) or the proprietary notice, and private the same
+	// three — a private repo may already carry the licence it will be
+	// published under.
+	switch kind {
+	case licOSI, licSourceAvail, licProprietary:
+		return nil
+	case licNonOSI:
+		return f(string(vis) + " repo carries a non-OSI licence (" + lic + "); expected an OSI-approved or recognised source-available licence, or a proprietary notice")
 	}
+	return f("unrecognised licence text; expected an OSI-approved licence (MIT, Apache-2.0, BSD, MPL, GPL family, ISC, Unlicense, EPL), a recognised source-available licence (PolyForm, FSL-1.1, BSL-1.1) or a proprietary notice")
 }

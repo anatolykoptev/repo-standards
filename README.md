@@ -16,7 +16,7 @@ project-maturity bar this tool enforces.
 | `index-link` | docs/INDEX.md links, by link target, every tracked `.md` under `docs/`, every root document and every nested `CLAUDE.md` (outside `vendor/`, `node_modules/`, `testdata/` and `third_party/`) |
 | `index-dead-link` | An in-repo link in docs/INDEX.md points at nothing: not a tracked file, not a directory holding one |
 | `claude-index` | The root CLAUDE.md links docs/INDEX.md — a `[text](docs/INDEX.md)` link or an `@docs/INDEX.md` import — so an agent that starts at CLAUDE.md reaches every document |
-| `license` | Public: an OSI-approved licence. Private: a proprietary notice, `Copyright (c) <year> <holder>. All rights reserved.` |
+| `license` | An OSI-approved licence, a recognised source-available licence (PolyForm, FSL-1.1, BSL-1.1) or a proprietary notice, `Copyright (c) <year> <holder>. All rights reserved.` — the same set at either visibility |
 | `pii-denylist` | Public only: a token from the hashed denylist appears in a tracked file |
 | `pii-home-path` | Public only: an absolute home directory path appears in a tracked file |
 | `pii-banned-word` | Public only: a word banned in public repositories appears in a tracked file |

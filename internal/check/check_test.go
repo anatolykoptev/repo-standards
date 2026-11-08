@@ -275,7 +275,21 @@ func TestLicenseMatrix(t *testing.T) {
 		{"isc", "ISC License\nPermission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted", licOSI, "ISC"},
 		{"unlicense", "This is free and unencumbered software released into the public domain.", licOSI, "Unlicense"},
 		{"commons clause over apache", "\"Commons Clause\" License Condition v1.0\n\n" + apacheHead, licNonOSI, "Commons Clause"},
-		{"bsl", "Business Source License 1.1\n", licNonOSI, "BSL"},
+		{"polyform noncommercial", polyNoncomm, licSourceAvail, "PolyForm Noncommercial"},
+		{"polyform small business", "# PolyForm Small Business License 1.0.0\n", licSourceAvail, "PolyForm Small Business"},
+		{"polyform shield", "# PolyForm Shield License 1.0.0\n", licSourceAvail, "PolyForm Shield"},
+		{"polyform internal use", "# PolyForm Internal Use License 1.0.0\n", licSourceAvail, "PolyForm Internal Use"},
+		{"polyform free trial", "# PolyForm Free Trial License 1.0.0\n", licSourceAvail, "PolyForm Free Trial"},
+		{"polyform perimeter", "# PolyForm Perimeter License 1.0.0\n", licSourceAvail, "PolyForm Perimeter"},
+		{"polyform strict", "# PolyForm Strict License 1.0.0\n", licSourceAvail, "PolyForm Strict"},
+		{"polyform unlisted variant", "# PolyForm Countdown License 1.0.0\n", licNonOSI, "PolyForm"},
+		{"fsl mit", fslMIT, licSourceAvail, "FSL-1.1-MIT"},
+		{"fsl alv2", "# Functional Source License, Version 1.1, ALv2 Future License\n\nApache License\nVersion 2.0\n", licSourceAvail, "FSL-1.1-ALv2"},
+		{"bsl", bsl11, licSourceAvail, "BSL-1.1"},
+		{"bsl other version", "Business Source License 1.0\n", licNonOSI, "BSL"},
+		{"elastic", "Elastic License 2.0\n", licNonOSI, "Elastic License"},
+		{"sspl", ssplText, licNonOSI, "SSPL"},
+		{"creative commons by-nc", "Creative Commons Attribution-NonCommercial 4.0\n", licNonOSI, "non-commercial licence"},
 		{"proprietary", propText, licProprietary, "proprietary notice"},
 		{"proprietary range", "Copyright (c) 2024-2026 Some Holder. All rights reserved.", licProprietary, "proprietary notice"},
 		{"proprietary unicode ©", "Copyright © 2026 Some Holder. All rights reserved.", licProprietary, "proprietary notice"},
@@ -296,15 +310,23 @@ func TestLicenseVsVisibility(t *testing.T) {
 		text string
 		bad  bool
 	}{
+		// Public: OSI, recognised source-available or proprietary all pass.
 		{Public, apacheHead, false},
 		{Public, mitText, false},
-		{Public, propText, true},
-		{Public, "Business Source License 1.1, a restricted licence text", true},
+		{Public, propText, false},
+		{Public, polyNoncomm, false},
+		{Public, fslMIT, false},
+		{Public, bsl11, false},
+		{Public, ssplText, true},
 		{Public, "do what you want with this, no licence text at all", true},
+		// Private: the same three pass — the repo may carry the licence it
+		// will be published under.
 		{Private, propText, false},
-		{Private, apacheHead, true},
-		{Private, mitText, true},
-		{Private, "Business Source License 1.1, a restricted licence text", true},
+		{Private, apacheHead, false},
+		{Private, mitText, false},
+		{Private, polyNoncomm, false},
+		{Private, bsl11, false},
+		{Private, ssplText, true},
 		{Private, "do what you want with this, no licence text at all", true},
 	}
 	for _, c := range cases {
