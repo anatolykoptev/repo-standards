@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/anatolykoptev/repo-standards/compare/v0.2.0...v0.3.0) (2026-11-08)
+
+
+### Added
+
+* init command and required issue/PR templates ([#7](https://github.com/anatolykoptev/repo-standards/issues/7)) ([ef9a4dc](https://github.com/anatolykoptev/repo-standards/commit/ef9a4dcf0aee462723d79fb04b4ad4975bb3328e))
+
 ## [0.2.0](https://github.com/anatolykoptev/repo-standards/compare/v0.1.0...v0.2.0) (2026-11-07)
 
 
