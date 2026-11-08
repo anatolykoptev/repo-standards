@@ -44,10 +44,17 @@ var (
 	psLineRE = regexp.MustCompile(`^\S+\s+\d+\s+\d+(?:\.\d+)?\s+\d+(?:\.\d+)?\s+\d+\s+\d+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S`)
 
 	// ghRepoRE captures the repository name segment of a GitHub URL or
-	// module/SSH path: github.com/<owner>/<name>.
-	ghRepoRE    = regexp.MustCompile(`github\.com[/:][A-Za-z0-9_.-]+/([A-Za-z0-9_.-]+)`)
-	pkgNameRE   = regexp.MustCompile(`"name"\s*:\s*"([^"]+)"`)
-	cargoNameRE = regexp.MustCompile(`name\s*=\s*"([^"]+)"`)
+	// module/SSH path: github.com/<owner>/<name>. Case-insensitive, and it
+	// matches on the original line so submatch indices share the candidate
+	// offsets' coordinate space.
+	ghRepoRE = regexp.MustCompile(`(?i)github\.com[/:][A-Za-z0-9_.-]+/([A-Za-z0-9_.-]+)`)
+	// The manifest name positions are anchored so look-alike keys do not
+	// suppress: "hostname =" is not a Cargo package name, and a nested
+	// package.json "name" (a dependency's) is not the repository's own. The
+	// package.json anchor accepts an opening brace and up to four columns of
+	// indentation; a deeper "name" simply fails toward reporting.
+	pkgNameRE   = regexp.MustCompile(`^[\s{,]{0,4}"name"\s*:\s*"([^"]+)"`)
+	cargoNameRE = regexp.MustCompile(`^\s*name\s*=\s*"([^"]+)"`)
 	// siteRelativeRE: the path is an attribute value or link target, a URL on
 	// the site rather than a directory on a machine.
 	siteRelativeRE = regexp.MustCompile(`(?i)\b(?:href|src|action|url)["']?\s*[=:(]\s*["']?$|\]\(\s*$`)
@@ -104,8 +111,9 @@ func lower(c byte) byte {
 // forEachCandidate calls fn with every lowercase token that could be on the
 // denylist: each maximal run of [a-z0-9_.@-] and every contiguous sub-sequence
 // of up to maxWindow of its pieces, joined by their original separators. So
-// "ssh.host.example" yields host.example. fn returns true to stop.
-func forEachCandidate(line string, fn func(tok string) bool) {
+// "ssh.host.example" yields host.example. start and end bound the token's
+// occurrence in line. fn returns true to stop.
+func forEachCandidate(line string, fn func(tok string, start, end int) bool) {
 	n := len(line)
 	for i := 0; i < n; {
 		if !isRunChar(lower(line[i])) {
@@ -116,12 +124,19 @@ func forEachCandidate(line string, fn func(tok string) bool) {
 		for j < n && isRunChar(lower(line[j])) {
 			j++
 		}
-		run := strings.ToLower(line[i:j])
+		seg := line[i:j]
 		i = j
-		run = strings.Trim(run, "_-.@")
-		if len(run) < minTokenLen {
+		lo, hi := 0, len(seg)
+		for lo < hi && isSep(seg[lo]) {
+			lo++
+		}
+		for hi > lo && isSep(seg[hi-1]) {
+			hi--
+		}
+		if hi-lo < minTokenLen {
 			continue
 		}
+		run := strings.ToLower(seg[lo:hi])
 		var starts, ends []int
 		for k := 0; k < len(run); {
 			for k < len(run) && isSep(run[k]) {
@@ -135,9 +150,11 @@ func forEachCandidate(line string, fn func(tok string) bool) {
 				starts, ends = append(starts, s), append(ends, k)
 			}
 		}
+		base := i - len(seg) + lo
 		for a := range starts {
 			for b := a; b < len(starts) && b-a < maxWindow; b++ {
-				if tok := run[starts[a]:ends[b]]; len(tok) >= minTokenLen && fn(tok) {
+				if tok := run[starts[a]:ends[b]]; len(tok) >= minTokenLen &&
+					fn(tok, base+starts[a], base+ends[b]) {
 					return
 				}
 			}
@@ -271,28 +288,58 @@ func siteRelative(line string, idx int) bool {
 	return siteRelativeRE.MatchString(line[:idx])
 }
 
-// publicRef reports whether a denylisted token that is also a public
-// repository name is used here in a way that can only mean that repository:
-// the name segment of github.com/<owner>/<name>, or the declared name of the
-// repository's own go.mod, package.json or Cargo.toml. Everywhere else the
-// token stays personal data.
-func publicRef(line, filePath, tok string) bool {
-	for _, m := range ghRepoRE.FindAllStringSubmatch(strings.ToLower(line), -1) {
-		if strings.TrimSuffix(m[1], ".git") == tok {
+// publicRef reports whether the occurrence [start, end) of a denylisted token
+// that is also a public repository name sits in a position that can only mean
+// that repository: inside the name segment of github.com/<owner>/<name>, or
+// inside the declared name/module value of the repo's own go.mod,
+// package.json or Cargo.toml. Everywhere else — including other occurrences
+// of the same token on the same line — it stays personal data.
+func publicRef(line, filePath, tok string, start, end int) bool {
+	for _, m := range ghRepoRE.FindAllStringSubmatchIndex(line, -1) {
+		if start >= m[2] && end <= m[3] && publicRepoName(tok, line[m[2]:m[3]]) {
 			return true
 		}
 	}
+	// A manifest name value: the occurrence must land inside the value and
+	// match a recorded form of its last path segment.
+	inValue := func(m []int) bool {
+		return m != nil && start >= m[2] && end <= m[3] &&
+			publicRepoName(tok, lastSeg(line[m[2]:m[3]]))
+	}
 	switch path.Base(filePath) {
 	case "go.mod":
-		if f := strings.Fields(line); len(f) >= 2 && f[0] == "module" && lastSeg(f[1]) == tok {
-			return true
+		if f := strings.Fields(line); len(f) >= 2 && f[0] == "module" {
+			if i := strings.Index(line[len(f[0]):], f[1]); i >= 0 {
+				i += len(f[0])
+				if start >= i && end <= i+len(f[1]) && publicRepoName(tok, lastSeg(f[1])) {
+					return true
+				}
+			}
 		}
 	case "package.json":
-		if m := pkgNameRE.FindStringSubmatch(line); m != nil && lastSeg(m[1]) == tok {
-			return true
+		for _, m := range pkgNameRE.FindAllStringSubmatchIndex(line, -1) {
+			if inValue(m) {
+				return true
+			}
 		}
 	case "Cargo.toml":
-		if m := cargoNameRE.FindStringSubmatch(line); m != nil && lastSeg(m[1]) == tok {
+		for _, m := range cargoNameRE.FindAllStringSubmatchIndex(line, -1) {
+			if inValue(m) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// publicRepoName reports whether tok is one of the token forms the denylist
+// generator records for a repository name — the name itself, the go- prefix
+// dropped, and the first hyphen segment — so github.com/o/zzqpub-chat
+// suppresses "zzqpub" in the name position and nowhere else.
+func publicRepoName(tok, segment string) bool {
+	segment = strings.TrimSuffix(segment, ".git")
+	for _, f := range denylist.NameForms(segment) {
+		if f == tok {
 			return true
 		}
 	}
@@ -330,9 +377,9 @@ func scanLine(line, filePath string, dl *denylist.List) []hit {
 		out = append(out, hit{PIIHomePath, "absolute home directory path"})
 	}
 	cats := map[string]bool{}
-	forEachCandidate(line, func(tok string) bool {
+	forEachCandidate(line, func(tok string, start, end int) bool {
 		if cat, ok := dl.Lookup(tok); ok && cat != denylist.WordCategory {
-			if dl.IsPublicName(tok) && publicRef(line, filePath, tok) {
+			if dl.IsPublicName(tok) && publicRef(line, filePath, tok, start, end) {
 				return false // a reference to the public repository itself
 			}
 			cats[cat] = true
@@ -353,10 +400,23 @@ func scanLine(line, filePath string, dl *denylist.List) []hit {
 	if ipLiteralHit(line) {
 		out = append(out, hit{PIIIP, "globally routable IP literal, category public-ip"})
 	}
-	if psLineRE.MatchString(line) {
+	if psLineRE.MatchString(line) && !isTestSource(filePath) {
 		out = append(out, hit{PIIPsDump, "process list line, category process-list"})
 	}
 	return out
+}
+
+// isTestSource reports whether a path is a test source or a fixture, where a
+// process-list-shaped row is synthetic, not a dump.
+func isTestSource(p string) bool {
+	if hasSegment(p, "testdata") || hasSegment(p, "fixtures") {
+		return true
+	}
+	base := path.Base(p)
+	return strings.HasSuffix(base, "_test.go") ||
+		strings.HasSuffix(base, "_test.py") ||
+		strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py") ||
+		strings.Contains(base, ".test.")
 }
 
 // scanLines streams r line by line, with no limit on file or line size.
@@ -368,7 +428,10 @@ func scanLines(name, prefix string, r *bufio.Reader, dl *denylist.List, st *Stat
 	for ln := 1; ; ln++ {
 		line, err := r.ReadString('\n')
 		if line != "" || ln == 1 && len(line1Hits) > 0 {
-			hits := append(line1Hits, scanLine(line, name, dl)...)
+			hits := scanLine(line, name, dl)
+			if ln == 1 {
+				hits = append(line1Hits, hits...)
+			}
 			if ok, reason := suppression(line); ok {
 				if len(reason) < minReasonLen {
 					out = append(out, Finding{Check: PIISuppression, Path: name, Line: ln,

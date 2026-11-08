@@ -203,29 +203,42 @@ func Parse(r io.Reader) (*List, error) {
 	return l, nil
 }
 
+// NameForms expands one repository name into the token forms the public-name
+// records cover: the name itself, the name without a "go-" prefix, and the
+// first hyphen-separated segment of that stripped form (the product family:
+// "oxpulse" for "oxpulse-chat"). The name is lowercased; empty input yields
+// nil. The scanner compares against the same forms, so this is the single
+// source of the derivation.
+func NameForms(n string) []string {
+	n = strings.ToLower(strings.TrimSpace(n))
+	if n == "" {
+		return nil
+	}
+	un := strings.TrimPrefix(n, "go-")
+	first, _, _ := strings.Cut(un, "-")
+	forms := []string{n}
+	if un != n && un != "" {
+		forms = append(forms, un)
+	}
+	if first != un && first != "" {
+		forms = append(forms, first)
+	}
+	return forms
+}
+
 // PublicNames expands the names of public repositories into the set of tokens
-// that are public by construction: the name itself, the name without a "go-"
-// prefix, and its first hyphen-separated segment (the product family:
-// "oxpulse" for "oxpulse-chat"). Tokens in this set stay on the denylist —
-// they are also recorded as public-name records so the scanner can suppress
-// them only where they can mean nothing but the repository itself. Names are
-// lowercased; segments shorter than MinTokenLen are ignored.
+// that are public by construction (see NameForms). Tokens in this set stay on
+// the denylist — they are also recorded as public-name records so the scanner
+// can suppress them only where they can mean nothing but the repository
+// itself. Segments shorter than MinTokenLen are ignored.
 func PublicNames(repoNames []string) map[string]bool {
 	set := map[string]bool{}
-	add := func(t string) {
-		if len(t) >= MinTokenLen {
-			set[t] = true
-		}
-	}
 	for _, n := range repoNames {
-		n = strings.ToLower(strings.TrimSpace(n))
-		if n == "" {
-			continue
+		for _, f := range NameForms(n) {
+			if len(f) >= MinTokenLen {
+				set[f] = true
+			}
 		}
-		add(n)
-		add(strings.TrimPrefix(n, "go-"))
-		first, _, _ := strings.Cut(strings.TrimPrefix(n, "go-"), "-")
-		add(first)
 	}
 	return set
 }
