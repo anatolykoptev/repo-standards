@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/anatolykoptev/repo-standards/compare/v0.3.0...v0.3.1) (2026-11-08)
+
+
+### Fixed
+
+* link parsing false positives and the licence policy ([#10](https://github.com/anatolykoptev/repo-standards/issues/10)) ([dc384aa](https://github.com/anatolykoptev/repo-standards/commit/dc384aad8f8fe1ff828f9263feb55e88d82346dc))
+
 ## [0.3.0](https://github.com/anatolykoptev/repo-standards/compare/v0.2.0...v0.3.0) (2026-11-08)
 
 
