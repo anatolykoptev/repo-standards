@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/anatolykoptev/repo-standards/compare/v0.3.1...v0.4.0) (2026-11-08)
+
+
+### Added
+
+* public-repo exposure rules (IPs, plans, process dumps, encoded home paths) ([#12](https://github.com/anatolykoptev/repo-standards/issues/12)) ([998d4fb](https://github.com/anatolykoptev/repo-standards/commit/998d4fbb57e5540533c3c67a9a4593a20344550a))
+
 ## [0.3.1](https://github.com/anatolykoptev/repo-standards/compare/v0.3.0...v0.3.1) (2026-11-08)
 
 
