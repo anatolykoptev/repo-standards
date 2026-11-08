@@ -12,7 +12,7 @@ The same list applies to public and private repositories.
 | README.md | 200 |
 | CLAUDE.md | 100 |
 | CHANGELOG.md | 30 |
-| LICENSE, LICENSE.md or LICENSE.txt | 40 |
+| LICENSE, LICENSE.md, LICENSE.txt, or a dual-licence layout (LICENSE-MIT, LICENSE-APACHE, LICENSE-APACHE-2.0, LICENSE.MIT, LICENSE.APACHE) | 40 |
 | CONTRIBUTING.md | 100 |
 | SECURITY.md | 100 |
 | CODE_OF_CONDUCT.md | 150 |
@@ -47,22 +47,32 @@ name. Two earlier failures shaped this:
   on Linux, because `grep -q` exits on the first match and the writer received
   SIGPIPE. This implementation uses a set lookup.
 
-Recognised forms: inline links, reference definitions, `href` attributes,
-`./` and `../` segments, `#fragment` and `?query` suffixes, percent-encoding,
-angle-bracket targets, link titles, and root-relative `/docs/x.md`. External
-URLs are ignored. Fenced code blocks, inline code spans and HTML comments
-(`<!-- ... -->`, also across lines) are removed first, so a path in code or in a
-comment is not a link. A comment that is never closed hides the rest of the
-document, as in CommonMark. A `<!--` inside code is code, and a fence marker
-inside a comment is comment text.
+Recognised forms: inline links (bare or angle-bracket targets with balanced
+parentheses, optional titles), reference definitions, `href` attributes,
+Claude Code `@path` imports (an `@` at a word start in the root CLAUDE.md only, for
+the `claude-index` check; elsewhere `@types/node` is text), `./` and `../` segments, `#fragment` and
+`?query` suffixes, percent-encoding, and root-relative `/docs/x.md`. External
+URLs are ignored, and a footnote definition (`[^x]: ...`) is not a link.
+Fenced code blocks, inline code spans and HTML comments are removed first, so
+a path in code or in a comment is not a link: a fence closes only on the same
+character in a run at least as long as the opener with no info string, a
+comment runs from `<!--` to `-->` even across lines, and spans and comments
+are scanned left to right so the leftmost opener wins. A `<!--` at line-start
+position that is never closed hides the rest of the document, as in
+CommonMark; a `<!--` after text is an inline comment only when its `-->` comes
+before the next blank line, otherwise it stays visible text. A code span closes
+only on a backtick run of the same length. A link destination or title never
+crosses a blank line and nests parentheses at most 32 deep, so the scan is
+linear in the document size.
 
 Required targets: every tracked `.md` under `docs/` other than INDEX.md, plus the
 root documents (README.md, CLAUDE.md, CHANGELOG.md, CONTRIBUTING.md,
 SECURITY.md, CODE_OF_CONDUCT.md and the licence file), plus every tracked
 `CLAUDE.md` at any depth (`web/CLAUDE.md`, `crates/CLAUDE.md`, ...). Per-directory
 CLAUDE.md files hold subsystem rules, and an agent that starts from the index
-must learn they exist. Files under `vendor/` or `node_modules/` are exempt, the
-same set the personal-data scan skips. These findings are `index-link`.
+must learn they exist. Files under `vendor/`, `node_modules/`, `testdata/` or
+`third_party/` are exempt from this rule (wider than the personal-data scan, which
+skips only `vendor/` and `node_modules/`). These findings are `index-link`.
 
 `repo-standards index` repairs them: it appends one row per unindexed
 document to docs/INDEX.md, or generates the whole index when the file is
@@ -83,7 +93,9 @@ too, reported as "leaves the repository". A miscounted `../` is the likeliest ty
 
 The root CLAUDE.md must link `docs/INDEX.md`, resolved from the repository root
 with the same parser (`./docs/INDEX.md`, `docs/INDEX.md#x` and `/docs/INDEX.md`
-pass). A mention in a code span or fenced block does not count. This closes the
+pass). Claude Code's import form `@docs/INDEX.md` counts too: an import pulls
+the file in, so the chain is complete. A mention in a code span or fenced
+block does not count. This closes the
 chain CLAUDE.md, INDEX, every document for an agent that starts at CLAUDE.md,
 which Claude Code always loads. A missing CLAUDE.md is only a `missing-file`.
 
@@ -91,14 +103,30 @@ which Claude Code always loads. A missing CLAUDE.md is only a `missing-file`.
 
 The text is recognised by signature phrases; the family is read from the header
 because licence titles also appear inside other licences as cross-references.
+The owner decides the licence; the check requires a recognised one.
 
-- Public: Apache-2.0, MIT, BSD-2/3-Clause, MPL-2.0, ISC, the GPL family
-  (GPL, LGPL, AGPL), EPL and the Unlicense pass. A source-available licence
-  (Commons Clause, BSL, PolyForm, Elastic, SSPL, FSL, non-commercial terms), a
-  proprietary notice or unrecognised text is a finding.
-- Private: only a proprietary notice passes,
-  `Copyright (c) <year or range> <holder>. All rights reserved.` An OSI licence
-  in a private repository is a finding.
+- Public and private accept the same set: an OSI-approved licence
+  (Apache-2.0, MIT, BSD-2/3-Clause, MPL-2.0, ISC, the GPL family — GPL, LGPL,
+  AGPL — EPL or the Unlicense), a recognised source-available licence —
+  PolyForm (Noncommercial, Small Business, Shield, Internal Use, Free Trial,
+  Perimeter or Strict), the Functional Source License (FSL-1.1-MIT or
+  FSL-1.1-ALv2, whose title may read "Apache 2.0 Future License") or the Business Source License 1.1 — or a proprietary notice,
+  `Copyright (c) <year or range> <holder>. All rights reserved.` A private
+  repository may carry the licence it will be published under.
+- A non-commercial rider ("provided the use is noncommercial only") on an
+  MIT, Apache, BSD or MPL text makes it non-OSI; the GPL family is exempt
+  because its canonical texts contain the word.
+- A dual-licence layout satisfies the LICENSE requirement; every licence file
+  present is classified and each one must pass.
+- Still a finding at either visibility: a missing LICENSE, unrecognised text,
+  or a restricted licence outside the recognised set (Commons Clause, an
+  unlisted PolyForm variant, another BSL version, Elastic, SSPL, Sustainable
+  Use or other non-commercial terms).
+
+Each source-available licence is matched by a distinctive phrase from its
+canonical text; the sources are recorded in `internal/check/license.go`. The
+match runs before the OSI phrases because the FSL embeds an MIT or Apache
+grant.
 
 ## Personal data (public repositories only)
 
@@ -106,7 +134,7 @@ Scanned: the **name** of every tracked file, the target of every tracked
 symlink (the scan never follows it), and the **content** of every tracked
 regular file, of any size, streamed line by line. Gitlink (submodule) paths are
 names too. Excluded: anything under a `vendor/` or `node_modules/` directory and
-lockfiles.
+lockfiles. `testdata/` and `third_party/` are scanned.
 
 Binary files (a NUL byte in the first 8 KiB) are not read, but they are counted:
 the run ends with `skipped N binary files`. Their names are still scanned.

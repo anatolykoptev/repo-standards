@@ -56,8 +56,9 @@ func toSet(items ...string) map[string]bool {
 	return m
 }
 
-// isVendored reports whether a path is third-party text under vendor/ or
-// node_modules/. The one list of such directories, shared by every check.
+// isVendored reports whether a path is third-party text: a vendor/ or
+// node_modules/ directory anywhere in the path. The personal-data scan skips
+// exactly this set, in the work tree and in --history alike.
 func isVendored(p string) bool {
 	return hasSegment(p, "vendor") || hasSegment(p, "node_modules")
 }

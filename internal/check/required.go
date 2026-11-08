@@ -32,6 +32,11 @@ const (
 	LicenceFile         = "LICENSE"
 )
 
+// licenceNames are the accepted licence spellings, including the dual-licence
+// layout (LICENSE-MIT + LICENSE-APACHE). Every one that is present is checked.
+var licenceNames = []string{"LICENSE", "LICENSE.md", "LICENSE.txt", "LICENSE-MIT",
+	"LICENSE-APACHE", "LICENSE-APACHE-2.0", "LICENSE.MIT", "LICENSE.APACHE"}
+
 const pullTemplateDir = ".github/PULL_REQUEST_TEMPLATE/"
 
 // requirements is the standard document set. It is identical for public and
@@ -40,7 +45,7 @@ var requirements = []requirement{
 	{names: []string{"README.md"}, min: 200},
 	{names: []string{"CLAUDE.md"}, min: 100},
 	{names: []string{"CHANGELOG.md"}, min: 30},
-	{names: []string{"LICENSE", "LICENSE.md", "LICENSE.txt"}, min: 40, skipPlaceholders: true},
+	{names: licenceNames, min: 40, skipPlaceholders: true},
 	{names: []string{"CONTRIBUTING.md"}, min: 100},
 	{names: []string{"SECURITY.md"}, min: 100},
 	{names: []string{"CODE_OF_CONDUCT.md"}, min: 150},
@@ -185,6 +190,22 @@ func checkRequired(root string, files []string, set map[string]bool, content map
 		}
 		content[name] = data
 		out = append(out, stubFindings(name, data, r)...)
+		if r.names[0] == LicenceFile {
+			// A dual-licence layout: every present licence file is held to
+			// the same bar, not only the first.
+			for _, n := range r.names {
+				if n == name || !set[n] {
+					continue
+				}
+				d, ok := readRegular(root, n, 8<<20)
+				if !ok {
+					out = append(out, Finding{Check: StubFile, Path: n, Msg: "not a readable regular file"})
+					continue
+				}
+				content[n] = d
+				out = append(out, stubFindings(n, d, r)...)
+			}
+		}
 	}
 	return out
 }

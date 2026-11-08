@@ -189,9 +189,10 @@ func linkText(s string) string {
 // linkEsc percent-encodes what cannot appear inside an angle-bracket target:
 // the delimiters themselves, the characters the link parser splits a
 // fragment or query on, and %, which it would otherwise unescape into a
-// different name.
+// different name. | is encoded too: inside a table row a bare | ends the
+// cell on GitHub even in a link target.
 var linkEsc = strings.NewReplacer(
-	"%", "%25", "<", "%3C", ">", "%3E", "?", "%3F", "#", "%23")
+	"%", "%25", "<", "%3C", ">", "%3E", "?", "%3F", "#", "%23", "|", "%7C")
 
 // linkTarget renders a link destination. A bare target is read up to the
 // first space or ) — and a leading < already opens an angle-bracket
@@ -201,7 +202,7 @@ func linkTarget(t string) string {
 	if strings.ContainsAny(t, " \t()<>?#%") {
 		return "<" + linkEsc.Replace(t) + ">"
 	}
-	return t
+	return linkEsc.Replace(t)
 }
 
 // cell escapes a table cell: a bare | would end the column.
