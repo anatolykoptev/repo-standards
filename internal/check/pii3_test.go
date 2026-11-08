@@ -283,3 +283,27 @@ func TestMissingFileIgnoredByGitignore(t *testing.T) {
 		}
 	}
 }
+
+func TestLargeFile(t *testing.T) {
+	big := strings.Repeat("x", 11<<20)
+	for _, vis := range []Visibility{Public, Private} {
+		res := runFull(t, writeRepo(t, with(goodFiles(vis), map[string]string{
+			"data/big.bin":     big,
+			"data/small.bin":   "x\n",
+			"testdata/big.dat": big,
+		})), vis, nil)
+		got := piiCheck(res, LargeFile)
+		if len(got) != 1 || got[0].Path != "data/big.bin" || !strings.Contains(got[0].Msg, "MiB") {
+			t.Fatalf("%s: got %v", vis, res.Findings)
+		}
+	}
+	// An LFS pointer body is exempt even past the size limit.
+	res := runFull(t, writeRepo(t, with(goodFiles(Public), map[string]string{
+		"assets/pointer.bin": "version https://git-lfs.github.com/spec/v1\n" + strings.Repeat("x", 11<<20),
+	})), Public, nil)
+	for _, f := range res.Findings {
+		if f.Check == LargeFile {
+			t.Fatalf("LFS pointer flagged: %v", f)
+		}
+	}
+}

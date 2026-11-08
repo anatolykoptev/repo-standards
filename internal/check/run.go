@@ -97,6 +97,7 @@ func Run(opts Options) (Result, error) {
 			out = append(out, checkLicense(opts.Visibility, name, data)...)
 		}
 	}
+	out = append(out, checkLargeFiles(opts.Root, files)...)
 	if opts.Visibility == Public {
 		pii, err := checkPII(opts.Root, files, opts.Denylist, &res.Stats)
 		if err != nil {
@@ -137,7 +138,7 @@ func RunHistory(opts Options) (Result, error) {
 		return Result{}, err
 	}
 	var res Result
-	res.Findings = scanLines("git-log", "", bufio.NewReaderSize(stdout, 64<<10), opts.Denylist, &res.Stats)
+	res.Findings = scanLines("git-log", "", bufio.NewReaderSize(stdout, 64<<10), opts.Denylist, &res.Stats, nil)
 	if err := cmd.Wait(); err != nil {
 		return Result{}, fmt.Errorf("git log failed: %w", err)
 	}

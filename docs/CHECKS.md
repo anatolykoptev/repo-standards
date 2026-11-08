@@ -27,13 +27,23 @@ files in subdirectories do not count. The pull-request directory follows the
 same shape: only `.md` files directly inside `.github/PULL_REQUEST_TEMPLATE/`
 count.
 
-A missing file is `missing-file`. A file below its minimum, a file that is not a
+A missing file is `missing-file`; when the file exists on disk but is covered
+by a gitignore rule (`git check-ignore -v` reports it), the finding says so and
+names the ignore file and line, for public and private repositories alike —
+"ignored" and "absent" are different bugs with different fixes. A file below
+its minimum, a file that is not a
 regular file (a symlink is not followed), or a file with a template placeholder
 is `stub-file`. Placeholders are: a TODO or TBD marker as a whole word, the
 classic filler paragraph, an unfilled bracketed template field such as the
 contact field of the Contributor Covenant, and sentences such as "project
 description here". Licence texts, .gitignore and issue templates skip the
 placeholder scan (an issue template is itself fill-in scaffolding).
+
+## Tracked file size: `large-file`
+
+A tracked regular file larger than 10 MiB, outside `testdata/`, is almost
+always a built artefact or a data dump that does not belong in git. Git LFS
+pointer stubs are exempt; the finding names the size. Public and private.
 
 ## docs/INDEX.md
 
@@ -140,11 +150,32 @@ Binary files (a NUL byte in the first 8 KiB) are not read, but they are counted:
 the run ends with `skipped N binary files`. Their names are still scanned.
 
 - `pii-home-path`: `/home/<name>` or `/Users/<name>` at the start of a path (not
-  inside a URL or a longer path), `file:///home/<name>`, WSL `/mnt/c/Users/<name>`
-  and `C:\Users\<name>`. Generic and service names (`user`, `runner`, `ubuntu`,
+  inside a URL or a longer path), `file:///home/<name>`, WSL `/mnt/c/Users/<name>`,
+  `C:\Users\<name>`, and Claude Code's dash-encoded project paths: a `-home-<name>-…`
+  or `-Users-<name>-…` segment (every `/` becomes `-`, so `.claude/projects/`
+  and `/tmp/claude-1000/` carry them) that is not glued to a longer word.
+  `~/` is deliberately out: it is too broad. Generic and service names (`user`,
+  `runner`, `ubuntu`,
   `node`, `postgres`, `x`, ...) pass, and so does a path that is the value of an
   `href`, `src`, `action`, `url(` or a markdown link target (a site URL). File
-  names are not tested for this rule.
+  names are not tested for this rule, except dash-encoded segments, which a file
+  name can carry verbatim.
+- `pii-ip` (category `public-ip`): an IPv4 or IPv6 literal that is globally
+  routable — a host inventory, a deploy target, a home connection. Candidates
+  are runs of address characters bounded so version strings (`v1.2.3.4`,
+  `1.2.3.4-beta`), OIDs (`1.3.6.1.4.1`) and MAC addresses are not taken, then
+  parsed with net/netip; an optional `:port` is accepted. Excluded: the RFC 5737
+  and RFC 3849 documentation ranges, loopback, link-local, multicast,
+  unspecified, broadcast, private (RFC 1918, `fc00::/7`), CGNAT `100.64.0.0/10`,
+  and a fixed allowlist of well-known public resolvers (`1.1.1.1`, `8.8.8.8`,
+  `9.9.9.9`, `208.67.222.222`, ... and their documented IPv6 forms).
+- `pii-plans` (category `plans-dir`): every tracked file under a directory
+  named exactly `plans` at any depth (`docs/plans/x.md`, `a/b/plans/y.txt`),
+  one finding per file at line 1. Plans leak operator paths and deploy
+  specifics and belong in a private location.
+- `pii-ps-dump` (category `process-list`): a line shaped like `ps aux` output —
+  `USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND` with the numeric
+  columns present. A process list names the machine's accounts and workload.
 - `pii-denylist`: every maximal run of letters, digits and `_ - . @` is
   lowercased, and the run plus each contiguous sub-sequence of up to six of its
   pieces is hashed and looked up. A host inside a URL and a domain inside an
