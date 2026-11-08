@@ -1,6 +1,7 @@
 package check
 
 import (
+	_ "embed"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +25,30 @@ const (
 		"in the Software without restriction.\n"
 	bsl11    = "Business Source License 1.1\n\nThe Licensor hereby grants you the right to copy, modify, create derivative works, redistribute, and make non-production use of the software.\n"
 	ssplText = "Server Side Public License\nVersion 1, October 16, 2018\n\nEveryone is permitted to copy and distribute verbatim copies of this license document.\n"
+)
+
+// Canonical OSI licence texts, fetched 2026-11-07:
+//
+//	https://www.gnu.org/licenses/agpl-3.0.txt
+//	https://www.gnu.org/licenses/gpl-3.0.txt
+//	https://www.gnu.org/licenses/gpl-2.0.txt
+//	https://www.gnu.org/licenses/lgpl-3.0.txt
+//	https://www.mozilla.org/media/MPL/2.0/index.txt
+//
+// The unmodified GPL family legitimately contains "noncommercial
+// distribution" (GPL-2.0 §3c) and "noncommercially" (GPL-3.0 and AGPL-3.0
+// §6c): a generic non-commercial marker must not claim them.
+var (
+	//go:embed testdata/licenses/agpl-3.0.txt
+	agpl30 string
+	//go:embed testdata/licenses/gpl-3.0.txt
+	gpl30 string
+	//go:embed testdata/licenses/gpl-2.0.txt
+	gpl20 string
+	//go:embed testdata/licenses/lgpl-3.0.txt
+	lgpl30 string
+	//go:embed testdata/licenses/mpl-2.0.txt
+	mpl20 string
 )
 
 func prose(title string, lines int) string {

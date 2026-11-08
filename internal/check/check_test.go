@@ -304,6 +304,29 @@ func TestLicenseMatrix(t *testing.T) {
 	}
 }
 
+// An unmodified canonical OSI licence text classifies as OSI and produces
+// no finding on a public repo. The GPL family is the regression case: its
+// texts contain "noncommercial distribution" (GPL-2.0 §3c) and
+// "noncommercially" (GPL-3.0, AGPL-3.0 §6c), which the generic
+// non-commercial marker claimed before the OSI headers ran.
+func TestLicenseCanonicalTexts(t *testing.T) {
+	for _, c := range []struct{ name, text, lic string }{
+		{"agpl-3.0", agpl30, "AGPL"},
+		{"gpl-3.0", gpl30, "GPL"},
+		{"gpl-2.0", gpl20, "GPL"},
+		{"lgpl-3.0", lgpl30, "LGPL"},
+		{"mpl-2.0", mpl20, "MPL-2.0"},
+	} {
+		if kind, lic := classifyLicense(c.text); kind != licOSI || lic != c.lic {
+			t.Errorf("%s: got (%v,%q) want (%v,%q)", c.name, kind, lic, licOSI, c.lic)
+		}
+		root := writeRepo(t, with(goodFiles(Public), map[string]string{"LICENSE": c.text}))
+		if fs := run(t, root, Public, nil); len(fs) != 0 {
+			t.Errorf("%s on a public repo: got %v want clean", c.name, fs)
+		}
+	}
+}
+
 func TestLicenseVsVisibility(t *testing.T) {
 	cases := []struct {
 		vis  Visibility

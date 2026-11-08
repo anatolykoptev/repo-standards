@@ -43,6 +43,11 @@ var (
 		{"functional source license, version 1.1, alv2 future license", "FSL-1.1-ALv2"},
 		{"business source license 1.1", "BSL-1.1"},
 	}
+	// nonOSIMarkers names restricted licences by their title phrase. They
+	// run before the OSI headers because these texts deliberately wrap or
+	// embed an OSI licence: Commons Clause is a rider over Apache or MIT,
+	// the SSPL is GPL-3.0 with one section replaced, and an Elastic or
+	// Sustainable Use text can carry a permissive grant inside.
 	nonOSIMarkers = []struct{ marker, name string }{
 		{"commons clause", "Commons Clause"},
 		{"business source license", "BSL"},
@@ -51,6 +56,14 @@ var (
 		{"server side public license", "SSPL"},
 		{"functional source license", "FSL"},
 		{"sustainable use license", "Sustainable Use License"},
+	}
+	// nonCommMarkers is the generic catch-all for licences that restrict
+	// commercial use without naming a recognised licence (CC-BY-NC and
+	// friends). It runs only after every OSI header has failed: the
+	// canonical GPL-family texts legitimately contain "noncommercial
+	// distribution" (GPL-2.0 §3c) and "noncommercially" (GPL-3.0 and
+	// AGPL-3.0 §6c).
+	nonCommMarkers = []struct{ marker, name string }{
 		{"noncommercial", "non-commercial licence"},
 	}
 )
@@ -62,7 +75,10 @@ func normalize(s string) string {
 // classifyLicense recognises a licence text by signature phrases. The licence
 // family is read from the header (titles such as "GNU GENERAL PUBLIC LICENSE"
 // also appear inside the AGPL and LGPL texts as cross-references), the
-// permissive ones from their grant sentence.
+// permissive ones from their grant sentence. Order is load-bearing: named
+// source-available and restricted licences first (their texts embed or wrap
+// an OSI licence), then the OSI headers, and the generic non-commercial
+// marker only when no OSI licence claimed the text.
 func classifyLicense(text string) (licenseKind, string) {
 	n := normalize(text)
 	head := n
@@ -104,6 +120,11 @@ func classifyLicense(text string) (licenseKind, string) {
 		return licOSI, "ISC"
 	case strings.Contains(n, "this is free and unencumbered software released into the public domain"):
 		return licOSI, "Unlicense"
+	}
+	for _, m := range nonCommMarkers {
+		if strings.Contains(n, m.marker) {
+			return licNonOSI, m.name
+		}
 	}
 	if proprietaryRE.MatchString(n) {
 		return licProprietary, "proprietary notice"
