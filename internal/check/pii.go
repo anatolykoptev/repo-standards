@@ -56,10 +56,12 @@ func toSet(items ...string) map[string]bool {
 	return m
 }
 
-// isVendored reports whether a path is third-party text under vendor/ or
-// node_modules/. The one list of such directories, shared by every check.
+// isVendored reports whether a path is third-party or generated text: a
+// vendor/, node_modules/, testdata/ or third_party/ directory anywhere in
+// the path. The one list of such directories, shared by every check.
 func isVendored(p string) bool {
-	return hasSegment(p, "vendor") || hasSegment(p, "node_modules")
+	return hasSegment(p, "vendor") || hasSegment(p, "node_modules") ||
+		hasSegment(p, "testdata") || hasSegment(p, "third_party")
 }
 
 // skipForPII reports whether a path is out of scope for the personal-data scan.

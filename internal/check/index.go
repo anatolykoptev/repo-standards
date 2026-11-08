@@ -10,11 +10,15 @@ import (
 const indexPath = "docs/INDEX.md"
 
 var (
-	inlineLinkRE = regexp.MustCompile(`\]\(\s*(<[^>]*>|[^)\s]*)`)
-	refDefRE     = regexp.MustCompile(`(?m)^[ ]{0,3}\[[^\]]+\]:\s*(<[^>]+>|\S+)`)
-	hrefRE       = regexp.MustCompile(`(?i)\bhref\s*=\s*["']([^"']+)["']`)
-	codeSpanRE   = regexp.MustCompile("`+[^`]*`+")
-	schemeRE     = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
+	// A reference definition's label may not start with ^: [^x]: is a
+	// footnote definition, not a link.
+	refDefRE = regexp.MustCompile(`(?m)^[ ]{0,3}\[[^\]^][^\]]*\]:\s*(<[^>]+>|\S+)`)
+	hrefRE   = regexp.MustCompile(`(?i)\bhref\s*=\s*["']([^"']+)["']`)
+	// importRE is Claude Code's import directive: an @path line in CLAUDE.md
+	// pulls the named file in, so it links the way a markdown link does.
+	importRE   = regexp.MustCompile(`(?m)^[ ]{0,3}@(<[^>]+>|[^\s]+)`)
+	codeSpanAt = regexp.MustCompile("^`+[^`]*`+")
+	schemeRE   = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
 )
 
 // stripCode removes fenced blocks, inline code spans and HTML comments: a path
@@ -22,57 +26,149 @@ var (
 // Every input line yields exactly one output line, so line numbers in the
 // result are line numbers in the input.
 //
-// A comment may span lines. One that is never closed runs to the end of the
-// document, as in CommonMark, so everything after it is hidden. A `<!--` inside
-// a code span or fence is code, not a comment, and a fence marker inside a
+// A fence closes per CommonMark: same character as the opener, at least as
+// long, and no info string; an opening backtick fence whose info string
+// contains a backtick is not a fence at all. A comment may span lines. One
+// opened at line-start position (an HTML block) runs to --> or the end of the
+// document; one opened mid-line (an inline comment) opens only when a -->
+// follows, so an unclosed inline <!-- stays visible text. A <!-- inside a
+// code span or fence is code, not a comment, and a fence marker inside a
 // comment is comment text.
 func stripCode(md string) string {
 	var b strings.Builder
-	fence := ""
+	var fence byte   // 0 outside a fence, '`' or '~' inside
+	var fenceLen int // the opener's run length
 	inComment := false
+	lastClose := lastCloser(md)
+	pos := 0 // byte offset of the line start in md
 	for _, line := range strings.Split(md, "\n") {
 		t := strings.TrimLeft(line, " ")
 		switch {
-		case fence != "":
-			if strings.HasPrefix(t, fence) {
-				fence = ""
+		case fence != 0:
+			if closesFence(t, fence, fenceLen) {
+				fence = 0
 			}
-		case !inComment && (strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")):
-			fence = t[:3]
+		case !inComment && opensFence(t):
+			fence = t[0]
+			fenceLen = runLen(t, t[0])
 		default:
-			if !inComment {
-				line = codeSpanRE.ReplaceAllString(line, "")
-			}
-			line, inComment = stripComments(line, inComment)
-			b.WriteString(line)
+			var out string
+			out, inComment = stripLine(line, inComment, pos, lastClose)
+			b.WriteString(out)
 		}
 		b.WriteByte('\n')
+		pos += len(line) + 1
 	}
 	return b.String()
 }
 
-// stripComments removes the HTML comment text from one line. inComment says
-// whether the line starts inside a comment; the result says whether it ends
-// inside one.
-func stripComments(line string, inComment bool) (string, bool) {
-	var out strings.Builder
-	for {
-		if inComment {
-			i := strings.Index(line, "-->")
-			if i < 0 {
-				return out.String(), true
+func runLen(s string, c byte) int {
+	n := 0
+	for n < len(s) && s[n] == c {
+		n++
+	}
+	return n
+}
+
+// lastCloser returns the byte offset of the last --> outside a fenced code
+// block. A --> inside a fence is code, never a comment closer, so a mid-line
+// <!-- whose only later --> is fenced has no closer and stays text.
+func lastCloser(md string) int {
+	fence := byte(0)
+	fenceLen := 0
+	last, pos := -1, 0
+	for _, line := range strings.Split(md, "\n") {
+		t := strings.TrimLeft(line, " ")
+		switch {
+		case fence != 0:
+			if closesFence(t, fence, fenceLen) {
+				fence = 0
 			}
-			line, inComment = line[i+3:], false
+		case opensFence(t):
+			fence = t[0]
+			fenceLen = runLen(t, t[0])
+		default:
+			if i := strings.LastIndex(line, "-->"); i >= 0 {
+				last = pos + i
+			}
+		}
+		pos += len(line) + 1
+	}
+	return last
+}
+
+// opensFence reports whether a trimmed line opens a code fence: a run of at
+// least three backticks or tildes. The rest of the line is the info string;
+// a backtick fence's info string cannot contain a backtick.
+func opensFence(t string) bool {
+	if len(t) < 3 || t[0] != '`' && t[0] != '~' {
+		return false
+	}
+	n := runLen(t, t[0])
+	if n < 3 {
+		return false
+	}
+	return t[0] != '`' || strings.IndexByte(t[n:], '`') < 0
+}
+
+// closesFence reports whether a trimmed line closes a fence opened by a run
+// of n of the character c: a run of c at least as long as n, followed by
+// whitespace only. A closing fence carries no info string.
+func closesFence(t string, c byte, n int) bool {
+	if r := runLen(t, c); r >= n && strings.TrimSpace(t[r:]) == "" {
+		return true
+	}
+	return false
+}
+
+// stripLine drops code spans and comment text from one line. inComment says
+// the line starts inside an unclosed comment and the result says whether it
+// ends inside one. Spans and comments are scanned in one left-to-right pass
+// so the leftmost opener wins: inside a comment backticks are text and a -->
+// inside what would be a code span still closes the comment; inside a code
+// span <!-- is text.
+//
+// pos is the line's byte offset in the document and lastClose the offset of
+// its last --> outside a fenced block. A <!-- preceded only by up to three
+// spaces (line-start position) opens a comment block that may run to the end
+// of the document. One after text opens an inline comment only when a -->
+// follows; an unclosed inline <!-- is literal text, as CommonMark parses it.
+func stripLine(line string, inComment bool, pos, lastClose int) (string, bool) {
+	var b strings.Builder
+	i := 0
+	for i < len(line) {
+		if inComment {
+			j := strings.Index(line[i:], "-->")
+			if j < 0 {
+				return b.String(), true
+			}
+			i += j + 3
+			inComment = false
 			continue
 		}
-		i := strings.Index(line, "<!--")
-		if i < 0 {
-			out.WriteString(line)
-			return out.String(), false
+		if strings.HasPrefix(line[i:], "<!--") {
+			wsOnly := strings.TrimSpace(line[:i]) == ""
+			switch {
+			case wsOnly && i <= 3:
+				inComment = true
+			case !wsOnly && pos+i < lastClose:
+				inComment = true
+			default:
+				b.WriteString(line[i : i+4])
+			}
+			i += 4
+			continue
 		}
-		out.WriteString(line[:i])
-		line, inComment = line[i+4:], true
+		if line[i] == '`' {
+			if m := codeSpanAt.FindString(line[i:]); m != "" {
+				i += len(m)
+				continue
+			}
+		}
+		b.WriteByte(line[i])
+		i++
 	}
+	return b.String(), inComment
 }
 
 // linkRef is one in-repo link: the repo-root-relative path it resolves to and
@@ -90,16 +186,120 @@ type linkRef struct {
 // for a bare file name as a substring (the first version of the check this
 // replaces) lets one row satisfy every file sharing a base name, and lets
 // prose count as a link: a document linked nowhere passed.
+type rawLink struct {
+	target string
+	at     int
+}
+
+// inlineLinks returns the target of every inline link [x](target ...) in md.
+// CommonMark destination rules: a <...> destination ends at the first >, a
+// bare one ends at whitespace or an unbalanced ) and may nest balanced ()
+// pairs; a backslash escapes the next character. An optional "...", '...' or
+// (...) title may follow, then a ) is required — without it the construct is
+// not a link.
+func inlineLinks(md string) []rawLink {
+	skipWS := func(i int) int {
+		for i < len(md) && (md[i] == ' ' || md[i] == '\t' || md[i] == '\n') {
+			i++
+		}
+		return i
+	}
+	var out []rawLink
+	for i := 0; i+1 < len(md); i++ {
+		if md[i] != ']' || md[i+1] != '(' {
+			continue
+		}
+		j := skipWS(i + 2)
+		var start, end int
+		if j < len(md) && md[j] == '<' {
+			k := strings.IndexByte(md[j+1:], '>')
+			if k < 0 {
+				continue
+			}
+			start, end = j, j+2+k
+			j = end
+		} else {
+			start = j
+			depth := 0
+		dest:
+			for j < len(md) {
+				switch md[j] {
+				case '\\':
+					j++
+				case '(':
+					depth++
+				case ')':
+					if depth == 0 {
+						break dest
+					}
+					depth--
+				case ' ', '\t', '\n':
+					break dest
+				}
+				j++
+			}
+			end = j
+		}
+		j = skipWS(j)
+		if j < len(md) && md[j] != ')' {
+			// Only a title may stand between the destination and the ).
+			switch md[j] {
+			case '"', '\'':
+				q := md[j]
+				for j++; j < len(md) && md[j] != q; j++ {
+					if md[j] == '\\' {
+						j++
+					}
+				}
+				if j >= len(md) {
+					continue
+				}
+				j++
+			case '(':
+				depth := 0
+				for ; j < len(md); j++ {
+					switch md[j] {
+					case '\\':
+						j++
+					case '(':
+						depth++
+					case ')':
+						depth--
+					}
+					if depth == 0 {
+						break
+					}
+				}
+				if j >= len(md) {
+					continue
+				}
+				j++
+			default:
+				continue
+			}
+			j = skipWS(j)
+		}
+		if j >= len(md) || md[j] != ')' {
+			continue
+		}
+		out = append(out, rawLink{md[start:end], start})
+	}
+	return out
+}
+
 func linkRefs(md, baseDir string) []linkRef {
 	md = stripCode(md)
-	type rawLink struct {
-		target string
-		at     int
-	}
-	var raw []rawLink
-	for _, re := range []*regexp.Regexp{inlineLinkRE, refDefRE, hrefRE} {
+	raw := inlineLinks(md)
+	for _, re := range []*regexp.Regexp{refDefRE, hrefRE} {
 		for _, m := range re.FindAllStringSubmatchIndex(md, -1) {
 			raw = append(raw, rawLink{md[m[2]:m[3]], m[2]})
+		}
+	}
+	// A @path import line is a link only when the token is path-shaped: an
+	// @mention of prose carries no / or . and stays out of the link set.
+	for _, m := range importRE.FindAllStringSubmatchIndex(md, -1) {
+		if t := md[m[2]:m[3]]; strings.ContainsAny(t, "/.") {
+			raw = append(raw, rawLink{t, m[2]})
 		}
 	}
 	var out []linkRef

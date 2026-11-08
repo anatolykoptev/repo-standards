@@ -606,6 +606,29 @@ func TestInitIndexAngleBracketsForSpacedNames(t *testing.T) {
 	}
 }
 
+// A | in a file name is encoded %7C in the link target: a bare | inside a
+// table row ends the cell on GitHub even in a destination.
+func TestInitIndexEncodesPipeInTarget(t *testing.T) {
+	files := baseRepo()
+	files["docs/pipe|x.md"] = filler("Piped", 3)
+	root := writeRepo(t, files)
+	runInit(t, Options{Root: root, Visibility: check.Private, Holder: "Zzq Holder"})
+	idx, err := os.ReadFile(filepath.Join(root, "docs", "INDEX.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(idx), "](pipe%7Cx.md)") {
+		t.Fatalf("piped doc not linked with a %%-encoded target:\n%s", idx)
+	}
+	if strings.Contains(string(idx), "](pipe|x.md)") {
+		t.Fatalf("a bare | in a link target splits the table cell:\n%s", idx)
+	}
+	gitIn(t, root, "add", "-A")
+	if fs := runCheck(t, root, check.Private); len(fs) != 0 {
+		t.Fatalf("check after init: %v", fs)
+	}
+}
+
 // R11: the disk listing only visits the directories the requirements name —
 // an unreadable directory anywhere else (a vendored tree, a build artefact)
 // does not abort the run.

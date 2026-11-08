@@ -47,22 +47,28 @@ name. Two earlier failures shaped this:
   on Linux, because `grep -q` exits on the first match and the writer received
   SIGPIPE. This implementation uses a set lookup.
 
-Recognised forms: inline links, reference definitions, `href` attributes,
-`./` and `../` segments, `#fragment` and `?query` suffixes, percent-encoding,
-angle-bracket targets, link titles, and root-relative `/docs/x.md`. External
-URLs are ignored. Fenced code blocks, inline code spans and HTML comments
-(`<!-- ... -->`, also across lines) are removed first, so a path in code or in a
-comment is not a link. A comment that is never closed hides the rest of the
-document, as in CommonMark. A `<!--` inside code is code, and a fence marker
-inside a comment is comment text.
+Recognised forms: inline links (bare or angle-bracket targets with balanced
+parentheses, optional titles), reference definitions, `href` attributes,
+Claude Code `@path` import lines, `./` and `../` segments, `#fragment` and
+`?query` suffixes, percent-encoding, and root-relative `/docs/x.md`. External
+URLs are ignored, and a footnote definition (`[^x]: ...`) is not a link.
+Fenced code blocks, inline code spans and HTML comments are removed first, so
+a path in code or in a comment is not a link: a fence closes only on the same
+character in a run at least as long as the opener with no info string, a
+comment runs from `<!--` to `-->` even across lines, and spans and comments
+are scanned left to right so the leftmost opener wins. A `<!--` at line-start
+position that is never closed hides the rest of the document, as in
+CommonMark; a `<!--` after text is an inline comment, and an unclosed one
+stays visible text.
 
 Required targets: every tracked `.md` under `docs/` other than INDEX.md, plus the
 root documents (README.md, CLAUDE.md, CHANGELOG.md, CONTRIBUTING.md,
 SECURITY.md, CODE_OF_CONDUCT.md and the licence file), plus every tracked
 `CLAUDE.md` at any depth (`web/CLAUDE.md`, `crates/CLAUDE.md`, ...). Per-directory
 CLAUDE.md files hold subsystem rules, and an agent that starts from the index
-must learn they exist. Files under `vendor/` or `node_modules/` are exempt, the
-same set the personal-data scan skips. These findings are `index-link`.
+must learn they exist. Files under `vendor/`, `node_modules/`, `testdata/` or
+`third_party/` are exempt, the same set the personal-data scan skips. These
+findings are `index-link`.
 
 `repo-standards index` repairs them: it appends one row per unindexed
 document to docs/INDEX.md, or generates the whole index when the file is
@@ -83,7 +89,9 @@ too, reported as "leaves the repository". A miscounted `../` is the likeliest ty
 
 The root CLAUDE.md must link `docs/INDEX.md`, resolved from the repository root
 with the same parser (`./docs/INDEX.md`, `docs/INDEX.md#x` and `/docs/INDEX.md`
-pass). A mention in a code span or fenced block does not count. This closes the
+pass). Claude Code's import form `@docs/INDEX.md` counts too: an import pulls
+the file in, so the chain is complete. A mention in a code span or fenced
+block does not count. This closes the
 chain CLAUDE.md, INDEX, every document for an agent that starts at CLAUDE.md,
 which Claude Code always loads. A missing CLAUDE.md is only a `missing-file`.
 
@@ -105,8 +113,8 @@ because licence titles also appear inside other licences as cross-references.
 Scanned: the **name** of every tracked file, the target of every tracked
 symlink (the scan never follows it), and the **content** of every tracked
 regular file, of any size, streamed line by line. Gitlink (submodule) paths are
-names too. Excluded: anything under a `vendor/` or `node_modules/` directory and
-lockfiles.
+names too. Excluded: anything under a `vendor/`, `node_modules/`, `testdata/`
+or `third_party/` directory and lockfiles.
 
 Binary files (a NUL byte in the first 8 KiB) are not read, but they are counted:
 the run ends with `skipped N binary files`. Their names are still scanned.

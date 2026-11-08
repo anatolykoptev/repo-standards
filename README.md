@@ -13,9 +13,9 @@ project-maturity bar this tool enforces.
 |---|---|
 | `missing-file` | README.md, CLAUDE.md, CHANGELOG.md, LICENSE (or LICENSE.md / LICENSE.txt), CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, .gitignore, docs/INDEX.md, a pull-request template and at least one issue template under .github/ exist as tracked files |
 | `stub-file` | Each is above a minimum size and carries no template placeholder |
-| `index-link` | docs/INDEX.md links, by link target, every tracked `.md` under `docs/`, every root document and every nested `CLAUDE.md` (outside `vendor/` and `node_modules/`) |
+| `index-link` | docs/INDEX.md links, by link target, every tracked `.md` under `docs/`, every root document and every nested `CLAUDE.md` (outside `vendor/`, `node_modules/`, `testdata/` and `third_party/`) |
 | `index-dead-link` | An in-repo link in docs/INDEX.md points at nothing: not a tracked file, not a directory holding one |
-| `claude-index` | The root CLAUDE.md links docs/INDEX.md, so an agent that starts at CLAUDE.md reaches every document |
+| `claude-index` | The root CLAUDE.md links docs/INDEX.md — a `[text](docs/INDEX.md)` link or an `@docs/INDEX.md` import — so an agent that starts at CLAUDE.md reaches every document |
 | `license` | Public: an OSI-approved licence. Private: a proprietary notice, `Copyright (c) <year> <holder>. All rights reserved.` |
 | `pii-denylist` | Public only: a token from the hashed denylist appears in a tracked file |
 | `pii-home-path` | Public only: an absolute home directory path appears in a tracked file |
