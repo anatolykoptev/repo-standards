@@ -5,7 +5,7 @@
 | File | Where | Content |
 |---|---|---|
 | plaintext list | outside the repository, `<config dir>/repo-standards/denylist.txt`, mode 0600 | `category:token`, one per line, `#` comments |
-| hash list | `internal/denylist/denylist.hashes`, compiled into the binary | salt and one `category hash` line per token |
+| hash list | `internal/denylist/denylist.hashes`, compiled into the binary | salt, one `category hash` line per token, and one `public-name hash` line per public repository name |
 
 `<config dir>` is `$XDG_CONFIG_HOME`, or `~/.config` when that is unset.
 
@@ -26,13 +26,21 @@ go run ./cmd/repo-standards denylist-gen
 
 Options: `--in FILE` for the plaintext list, `--out FILE` for the hash list,
 and one of `--public-repos FILE` (public repository names, one per line) or
-`--public-owner NAME` (listed with the gh CLI). A token equal to a public
-repository name, to that name without a `go-` prefix, or to its first
-hyphen-separated segment is already published and is dropped; the command prints
-how many, never which. Banned words are never dropped. The
+`--public-owner NAME` (listed with the gh CLI). Each public name, its form
+without a `go-` prefix, and its first hyphen-separated segment is written to
+the hash list as a `public-name` record; the command prints how many, never
+which. Banned words are never recorded as public names. The
 command refuses a plaintext list that group or others can read. It reuses the
 salt already in the output file, so regenerating an unchanged list leaves no
 diff. Commit the new hash list, never the plaintext.
+
+A denylist token equal to a public repository name **stays on the list** — a
+host name or SSH alias that collides with a repo name is still personal data.
+The `public-name` records only let the scanner suppress the match where the
+token can mean nothing but the repository itself: as the name segment of
+`github.com/<owner>/<name>` in a URL or module path, or as the declared name
+in the repository's own `go.mod`, `package.json` or `Cargo.toml`. Anywhere
+else the token is reported.
 
 ## What a salted hash protects
 
@@ -60,7 +68,9 @@ An e-mail address that is already in the public commit history of every
 published repository (the commit identity) is not personal data in the sense of
 this scan, and listing it only produces a finding on every `git log` of every
 repository. Do not add the commit identity. Names of public repositories are
-dropped at generation time for the same reason.
+not denylist entries either — but when such a name is a real token on the
+list, it stays on the list and only its in-context uses are suppressed (see
+above).
 
 ## Guards against an empty list
 

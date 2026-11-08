@@ -2,7 +2,10 @@ package check
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -173,12 +176,16 @@ func checkRequired(root string, files []string, set map[string]bool, content map
 		name, ok := r.found(files, set)
 		if !ok {
 			msg := "missing required file " + r.names[0]
-			alts := append([]string{}, r.names[1:]...)
-			if r.dirHint != "" {
-				alts = append(alts, r.dirHint)
-			}
-			if len(alts) > 0 {
-				msg += " (or " + strings.Join(alts, ", ") + ")"
+			if src, ln, ok := ignoredOnDisk(root, r.names); ok {
+				msg += fmt.Sprintf(": exists but is ignored by .gitignore (line %s of %s)", ln, src)
+			} else {
+				alts := append([]string{}, r.names[1:]...)
+				if r.dirHint != "" {
+					alts = append(alts, r.dirHint)
+				}
+				if len(alts) > 0 {
+					msg += " (or " + strings.Join(alts, ", ") + ")"
+				}
 			}
 			out = append(out, Finding{Check: MissingFile, Path: r.names[0], Msg: msg})
 			continue
@@ -208,6 +215,36 @@ func checkRequired(root string, files []string, set map[string]bool, content map
 		}
 	}
 	return out
+}
+
+// ignoredOnDisk reports the ignore source and line covering a required name
+// that exists on disk but is untracked: `git check-ignore -v` prints
+// "<file>:<line>:<pattern>\t<path>" and exits 0 for an ignored path. An
+// absolute source path (a global excludes file) is cut to its base name so a
+// finding never prints an operator path.
+func ignoredOnDisk(root string, names []string) (src, line string, ok bool) {
+	for _, n := range names {
+		n = strings.TrimSuffix(n, "/")
+		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(n))); err != nil {
+			continue
+		}
+		out, err := exec.Command("git", "-C", root, "check-ignore", "-v", "--", n).Output()
+		if err != nil {
+			continue
+		}
+		f := string(out)
+		i := strings.IndexByte(f, ':')
+		j := strings.IndexByte(f[i+1:], ':')
+		if i < 0 || j < 0 {
+			continue
+		}
+		src = f[:i]
+		if filepath.IsAbs(src) {
+			src = filepath.Base(src)
+		}
+		return src, f[i+1 : i+1+j], true
+	}
+	return "", "", false
 }
 
 // RequiredFindings applies the required-file rules to the repository at root

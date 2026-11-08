@@ -116,33 +116,42 @@ func TestNilListLooksUpNothing(t *testing.T) {
 	}
 }
 
-func TestPublicNamesExcluded(t *testing.T) {
-	ex := PublicNames([]string{"zzqproduct", "Go-Zzqlib", "zzqfam-chat", "zz-x", "go-zzqext-kit"})
+func TestPublicNamesRecorded(t *testing.T) {
+	pub := PublicNames([]string{"zzqproduct", "Go-Zzqlib", "zzqfam-chat", "zz-x", "go-zzqext-kit"})
 	plain := "host:zzqproduct\nssh-alias:zzqlib\nhost:zzqfam\nhost:zzqfam-chat\nhost:zzqext-kit\nhost:zzqprivate\nword:zzqproduct\n"
-	data, n, err := Generate(strings.NewReader(plain), salt, ex)
+	data, n, err := Generate(strings.NewReader(plain), salt, pub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 5 {
-		t.Fatalf("excluded %d, want 5", n)
-	}
-	l, _ := Parse(strings.NewReader(string(data)))
-	for _, tok := range []string{"zzqlib", "zzqfam", "zzqfam-chat", "zzqext-kit"} {
-		if _, ok := l.Lookup(tok); ok {
-			t.Errorf("public name %q still on the list", tok)
-		}
-	}
-	if _, ok := l.Lookup("zzqprivate"); !ok {
-		t.Error("private token was dropped")
-	}
-	// Banned words are never excluded, even when a repo carries the name.
-	if !l.LookupWord("zzqproduct") {
-		t.Error("word entry lost")
-	}
 	// zzqproduct, go-zzqlib, zzqlib, zzqfam-chat, zzqfam, zz-x, go-zzqext-kit,
 	// zzqext-kit, zzqext; "zz" is too short.
-	if len(ex) != 9 {
-		t.Fatalf("set size %d: %v", len(ex), ex)
+	if n != 9 || len(pub) != 9 {
+		t.Fatalf("recorded %d, set %v", n, pub)
+	}
+	l, err := Parse(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Public repository names stay denylisted — they are only suppressed
+	// contextually, at scan time.
+	for _, tok := range []string{"zzqproduct", "zzqlib", "zzqfam", "zzqfam-chat", "zzqext-kit", "zzqprivate"} {
+		if _, ok := l.Lookup(tok); !ok {
+			t.Errorf("token %q was dropped", tok)
+		}
+	}
+	for _, tok := range []string{"zzqproduct", "go-zzqlib", "zzqlib", "zzqfam-chat", "zzqfam", "zz-x", "go-zzqext-kit", "zzqext-kit", "zzqext"} {
+		if !l.IsPublicName(tok) {
+			t.Errorf("%q not recorded as a public name", tok)
+		}
+	}
+	if l.IsPublicName("zzqprivate") {
+		t.Error("private token recorded as public")
+	}
+	if l.IsPublicName("zz") {
+		t.Error("short segment recorded")
+	}
+	if !l.LookupWord("zzqproduct") {
+		t.Error("word entry lost")
 	}
 }
 

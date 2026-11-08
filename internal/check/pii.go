@@ -32,6 +32,29 @@ var (
 	unixHomeRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9._~%/-]|file://)/(?:home|Users)/([A-Za-z0-9._-]+)`)
 	wslHomeRE  = regexp.MustCompile(`(?i)/mnt/[a-z]/Users/([A-Za-z0-9._-]+)`)
 	winHomeRE  = regexp.MustCompile(`(?i)[A-Z]:\\Users\\([A-Za-z0-9._-]+)`)
+	// dashHomeRE: Claude Code's dash-encoded project paths — every '/' in a
+	// directory becomes '-', so a home directory shows up as the segment
+	// "-home-<name>-proj" (or "-Users-<name>-proj") inside /tmp/claude-1000/…
+	// or .claude/projects/…. The dash before "home"/"Users" must not be
+	// glued to a word ("x-home-<name>", "--set-home-dir"); "~/" stays out.
+	dashHomeRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9._-])-(?:home|Users)-([A-Za-z0-9._]+)`)
+
+	// psLineRE: a ps aux row — USER PID %CPU %MEM VSZ RSS TTY STAT START
+	// TIME COMMAND — with the numeric columns present.
+	psLineRE = regexp.MustCompile(`^\S+\s+\d+\s+\d+(?:\.\d+)?\s+\d+(?:\.\d+)?\s+\d+\s+\d+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S`)
+
+	// ghRepoRE captures the repository name segment of a GitHub URL or
+	// module/SSH path: github.com/<owner>/<name>. Case-insensitive, and it
+	// matches on the original line so submatch indices share the candidate
+	// offsets' coordinate space.
+	ghRepoRE = regexp.MustCompile(`(?i)github\.com[/:][A-Za-z0-9_.-]+/([A-Za-z0-9_.-]+)`)
+	// The manifest name positions are anchored so look-alike keys do not
+	// suppress: "hostname =" is not a Cargo package name, and a nested
+	// package.json "name" (a dependency's) is not the repository's own. The
+	// package.json anchor accepts an opening brace and up to four columns of
+	// indentation; a deeper "name" simply fails toward reporting.
+	pkgNameRE   = regexp.MustCompile(`^[\s{,]{0,4}"name"\s*:\s*"([^"]+)"`)
+	cargoNameRE = regexp.MustCompile(`^\s*name\s*=\s*"([^"]+)"`)
 	// siteRelativeRE: the path is an attribute value or link target, a URL on
 	// the site rather than a directory on a machine.
 	siteRelativeRE = regexp.MustCompile(`(?i)\b(?:href|src|action|url)["']?\s*[=:(]\s*["']?$|\]\(\s*$`)
@@ -88,8 +111,9 @@ func lower(c byte) byte {
 // forEachCandidate calls fn with every lowercase token that could be on the
 // denylist: each maximal run of [a-z0-9_.@-] and every contiguous sub-sequence
 // of up to maxWindow of its pieces, joined by their original separators. So
-// "ssh.host.example" yields host.example. fn returns true to stop.
-func forEachCandidate(line string, fn func(tok string) bool) {
+// "ssh.host.example" yields host.example. start and end bound the token's
+// occurrence in line. fn returns true to stop.
+func forEachCandidate(line string, fn func(tok string, start, end int) bool) {
 	n := len(line)
 	for i := 0; i < n; {
 		if !isRunChar(lower(line[i])) {
@@ -100,12 +124,19 @@ func forEachCandidate(line string, fn func(tok string) bool) {
 		for j < n && isRunChar(lower(line[j])) {
 			j++
 		}
-		run := strings.ToLower(line[i:j])
+		seg := line[i:j]
 		i = j
-		run = strings.Trim(run, "_-.@")
-		if len(run) < minTokenLen {
+		lo, hi := 0, len(seg)
+		for lo < hi && isSep(seg[lo]) {
+			lo++
+		}
+		for hi > lo && isSep(seg[hi-1]) {
+			hi--
+		}
+		if hi-lo < minTokenLen {
 			continue
 		}
+		run := strings.ToLower(seg[lo:hi])
 		var starts, ends []int
 		for k := 0; k < len(run); {
 			for k < len(run) && isSep(run[k]) {
@@ -119,9 +150,11 @@ func forEachCandidate(line string, fn func(tok string) bool) {
 				starts, ends = append(starts, s), append(ends, k)
 			}
 		}
+		base := i - len(seg) + lo
 		for a := range starts {
 			for b := a; b < len(starts) && b-a < maxWindow; b++ {
-				if tok := run[starts[a]:ends[b]]; len(tok) >= minTokenLen && fn(tok) {
+				if tok := run[starts[a]:ends[b]]; len(tok) >= minTokenLen &&
+					fn(tok, base+starts[a], base+ends[b]) {
 					return
 				}
 			}
@@ -231,6 +264,20 @@ func homePathHit(line string) bool {
 	return false
 }
 
+// dashHomePathHit reports whether the line carries a dash-encoded home path.
+// The same placeholder-name and site-relative exceptions apply: "-home-runner"
+// is a CI account, and a path shown as a link target is not a machine layout.
+func dashHomePathHit(line string) bool {
+	for _, loc := range dashHomeRE.FindAllStringSubmatchIndex(line, -1) {
+		name := strings.ToLower(line[loc[2]:loc[3]])
+		if placeholderUsers[name] || siteRelative(line, loc[0]) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // siteRelative reports whether the path match starting at idx is an attribute
 // or link target.
 func siteRelative(line string, idx int) bool {
@@ -241,15 +288,100 @@ func siteRelative(line string, idx int) bool {
 	return siteRelativeRE.MatchString(line[:idx])
 }
 
-// scanLine applies every personal-data rule to one line of text.
-func scanLine(line string, dl *denylist.List) []hit {
+// publicRef reports whether the occurrence [start, end) of a denylisted token
+// that is also a public repository name sits in a position that can only mean
+// that repository: inside the name segment of github.com/<owner>/<name>, or
+// inside the declared name/module value of the repo's own go.mod,
+// package.json or Cargo.toml. Everywhere else — including other occurrences
+// of the same token on the same line — it stays personal data.
+func publicRef(line, filePath, tok string, start, end int) bool {
+	for _, m := range ghRepoRE.FindAllStringSubmatchIndex(line, -1) {
+		if start >= m[2] && end <= m[3] && publicRepoName(tok, line[m[2]:m[3]]) {
+			return true
+		}
+	}
+	// A manifest name value: the occurrence must land inside the value and
+	// match a recorded form of its last path segment.
+	inValue := func(m []int) bool {
+		return m != nil && start >= m[2] && end <= m[3] &&
+			publicRepoName(tok, lastSeg(line[m[2]:m[3]]))
+	}
+	switch path.Base(filePath) {
+	case "go.mod":
+		if f := strings.Fields(line); len(f) >= 2 && f[0] == "module" {
+			if i := strings.Index(line[len(f[0]):], f[1]); i >= 0 {
+				i += len(f[0])
+				if start >= i && end <= i+len(f[1]) && publicRepoName(tok, lastSeg(f[1])) {
+					return true
+				}
+			}
+		}
+	case "package.json":
+		for _, m := range pkgNameRE.FindAllStringSubmatchIndex(line, -1) {
+			if inValue(m) {
+				return true
+			}
+		}
+	case "Cargo.toml":
+		for _, m := range cargoNameRE.FindAllStringSubmatchIndex(line, -1) {
+			if inValue(m) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// publicRepoName reports whether tok is one of the token forms the denylist
+// generator records for a repository name — the name itself, the go- prefix
+// dropped, and the first hyphen segment — so github.com/o/zzqpub-chat
+// suppresses "zzqpub" in the name position and nowhere else.
+func publicRepoName(tok, segment string) bool {
+	segment = strings.TrimSuffix(segment, ".git")
+	for _, f := range denylist.NameForms(segment) {
+		if f == tok {
+			return true
+		}
+	}
+	return false
+}
+
+func lastSeg(s string) string {
+	if i := strings.LastIndexByte(s, '/'); i >= 0 {
+		return s[i+1:]
+	}
+	return s
+}
+
+// underPlansDir reports whether a tracked path sits below a directory named
+// exactly "plans", at any depth. Plan files leak operator paths and deploy
+// specifics and belong in a private location.
+func underPlansDir(p string) bool {
+	segs := strings.Split(p, "/")
+	for _, s := range segs[:len(segs)-1] {
+		if s == "plans" {
+			return true
+		}
+	}
+	return false
+}
+
+var plansHit = hit{PIIPlans, "tracked file inside a plans directory, category plans-dir"}
+
+// scanLine applies every personal-data rule to one line of text. filePath is
+// the file the line comes from (or is being scanned as, for names and symlink
+// targets); it scopes the manifest-name suppression of public-name tokens.
+func scanLine(line, filePath string, dl *denylist.List) []hit {
 	var out []hit
-	if homePathHit(line) {
+	if homePathHit(line) || dashHomePathHit(line) {
 		out = append(out, hit{PIIHomePath, "absolute home directory path"})
 	}
 	cats := map[string]bool{}
-	forEachCandidate(line, func(tok string) bool {
+	forEachCandidate(line, func(tok string, start, end int) bool {
 		if cat, ok := dl.Lookup(tok); ok && cat != denylist.WordCategory {
+			if dl.IsPublicName(tok) && publicRef(line, filePath, tok, start, end) {
+				return false // a reference to the public repository itself
+			}
 			cats[cat] = true
 		}
 		return false
@@ -265,16 +397,41 @@ func scanLine(line string, dl *denylist.List) []hit {
 	if banned {
 		out = append(out, hit{PIIBannedWord, "banned word in a public repository"})
 	}
+	if ipLiteralHit(line) {
+		out = append(out, hit{PIIIP, "globally routable IP literal, category public-ip"})
+	}
+	if psLineRE.MatchString(line) && !isTestSource(filePath) {
+		out = append(out, hit{PIIPsDump, "process list line, category process-list"})
+	}
 	return out
 }
 
+// isTestSource reports whether a path is a test source or a fixture, where a
+// process-list-shaped row is synthetic, not a dump.
+func isTestSource(p string) bool {
+	if hasSegment(p, "testdata") || hasSegment(p, "fixtures") {
+		return true
+	}
+	base := path.Base(p)
+	return strings.HasSuffix(base, "_test.go") ||
+		strings.HasSuffix(base, "_test.py") ||
+		strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py") ||
+		strings.Contains(base, ".test.")
+}
+
 // scanLines streams r line by line, with no limit on file or line size.
-func scanLines(name, prefix string, r *bufio.Reader, dl *denylist.List, st *Stats) []Finding {
+// line1Hits are synthetic hits attached to line 1 — today the plans
+// directory rule, so its finding can be suppressed by a marker on line 1 and
+// still fires for an empty file.
+func scanLines(name, prefix string, r *bufio.Reader, dl *denylist.List, st *Stats, line1Hits []hit) []Finding {
 	var out []Finding
 	for ln := 1; ; ln++ {
 		line, err := r.ReadString('\n')
-		if line != "" {
-			hits := scanLine(line, dl)
+		if line != "" || ln == 1 && len(line1Hits) > 0 {
+			hits := scanLine(line, name, dl)
+			if ln == 1 {
+				hits = append(line1Hits, hits...)
+			}
 			if ok, reason := suppression(line); ok {
 				if len(reason) < minReasonLen {
 					out = append(out, Finding{Check: PIISuppression, Path: name, Line: ln,
@@ -304,12 +461,21 @@ func scanLines(name, prefix string, r *bufio.Reader, dl *denylist.List, st *Stat
 func checkPII(root string, files []string, dl *denylist.List, st *Stats) ([]Finding, error) {
 	var out []Finding
 	for _, f := range files {
+		if isVendored(f) {
+			continue
+		}
+		plans := underPlansDir(f)
 		if skipForPII(f) {
+			// A lockfile's content is not scanned; its plans/ location is
+			// still the exposure.
+			if plans {
+				out = append(out, plansFinding(f))
+			}
 			continue
 		}
 		// A published file name is published text.
-		for _, h := range scanLine(f, dl) {
-			if h.check == PIIHomePath {
+		for _, h := range scanLine(f, f, dl) {
+			if h.check == PIIHomePath && !dashHomePathHit(f) {
 				continue // "home/x" as a directory name is not a home path
 			}
 			out = append(out, Finding{Check: h.check, Path: f, Msg: "file name: " + h.msg})
@@ -317,19 +483,29 @@ func checkPII(root string, files []string, dl *denylist.List, st *Stats) ([]Find
 		p := filepath.Join(root, filepath.FromSlash(f))
 		fi, err := os.Lstat(p)
 		if err != nil {
+			if plans {
+				out = append(out, plansFinding(f))
+			}
 			continue // a tracked file deleted from the work tree
 		}
 		switch {
 		case fi.Mode()&os.ModeSymlink != 0:
+			if plans {
+				out = append(out, plansFinding(f))
+			}
 			target, err := os.Readlink(p)
 			if err != nil {
 				continue
 			}
-			for _, h := range scanLine(target, dl) {
+			for _, h := range scanLine(target, f, dl) {
 				out = append(out, Finding{Check: h.check, Path: f, Msg: "symlink target: " + h.msg})
 			}
 		case fi.Mode().IsRegular():
-			fs, err := scanFile(p, f, dl, st)
+			var extra []hit
+			if plans {
+				extra = []hit{plansHit}
+			}
+			fs, err := scanFile(p, f, dl, st, extra)
 			if err != nil {
 				return nil, fmt.Errorf("scan %s: %w", f, err)
 			}
@@ -339,7 +515,14 @@ func checkPII(root string, files []string, dl *denylist.List, st *Stats) ([]Find
 	return out, nil
 }
 
-func scanFile(p, name string, dl *denylist.List, st *Stats) ([]Finding, error) {
+func plansFinding(f string) Finding {
+	return Finding{Check: PIIPlans, Path: f, Line: 1, Msg: plansHit.msg}
+}
+
+// scanFile scans a regular file's content. line1Hits ride along to
+// scanLines; a binary file still yields them (there is no line 1 to carry a
+// suppression marker, so they fire unconditionally).
+func scanFile(p, name string, dl *denylist.List, st *Stats, line1Hits []hit) ([]Finding, error) {
 	fh, err := os.Open(p)
 	if err != nil {
 		return nil, err
@@ -349,9 +532,13 @@ func scanFile(p, name string, dl *denylist.List, st *Stats) ([]Finding, error) {
 	head, _ := r.Peek(binaryProbe)
 	if bytes.IndexByte(head, 0) >= 0 {
 		st.SkippedBinary++
-		return nil, nil
+		var out []Finding
+		for _, h := range line1Hits {
+			out = append(out, Finding{Check: h.check, Path: name, Line: 1, Msg: h.msg})
+		}
+		return out, nil
 	}
-	return scanLines(name, "", r, dl, st), nil
+	return scanLines(name, "", r, dl, st, line1Hits), nil
 }
 
 func sortedKeys(m map[string]bool) []string {

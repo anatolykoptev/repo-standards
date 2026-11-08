@@ -18,6 +18,10 @@ const (
 	PIIHomePath    = "pii-home-path"
 	PIIBannedWord  = "pii-banned-word"
 	PIISuppression = "pii-suppression"
+	PIIIP          = "pii-ip"
+	PIIPlans       = "pii-plans"
+	PIIPsDump      = "pii-ps-dump"
+	LargeFile      = "large-file"
 )
 
 // Finding is one violation. Msg never contains matched personal data.

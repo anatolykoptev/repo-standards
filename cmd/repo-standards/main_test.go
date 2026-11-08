@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/anatolykoptev/repo-standards/internal/denylist"
 )
 
 func do(args ...string) (code int, out, errOut string) {
@@ -158,7 +160,7 @@ func TestCustomDenylistFlag(t *testing.T) {
 	}
 }
 
-func TestGenDropsPublicRepoNames(t *testing.T) {
+func TestGenRecordsPublicRepoNames(t *testing.T) {
 	dir := t.TempDir()
 	in := filepath.Join(dir, "d.txt")
 	names := filepath.Join(dir, "names.txt")
@@ -166,12 +168,48 @@ func TestGenDropsPublicRepoNames(t *testing.T) {
 	_ = os.WriteFile(in, []byte("host:zzqpub\nhost:zzqpriv\n"), 0o600)
 	_ = os.WriteFile(names, []byte("zzqpub-chat\nother\n"), 0o644)
 	code, so, e := do("denylist-gen", "--in", in, "--out", out, "--public-repos", names)
-	if code != exitOK || !strings.Contains(so, "(1 tokens); dropped 1") || strings.Contains(so+e, "zzqpub") {
+	// zzqpub-chat, zzqpub and other are recorded as public names; the two
+	// plaintext tokens stay on the list either way.
+	if code != exitOK || !strings.Contains(so, "(2 tokens); recorded 3") || strings.Contains(so+e, "zzqpub") {
 		t.Fatalf("%d %q %q", code, so, e)
 	}
 	if code, _, _ := do("denylist-gen", "--in", in, "--out", out, "--public-repos", names, "--public-owner", "x"); code != exitUsage {
 		t.Fatal("both sources accepted")
 	}
+}
+
+// A token that happens to equal a public repository name must stay on the
+// list: --public-repos/--public-owner record the names for contextual
+// suppression, they must not strip the tokens.
+func TestGenKeepsPublicRepoNames(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "d.txt")
+	names := filepath.Join(dir, "names.txt")
+	out := filepath.Join(dir, "d.hashes")
+	_ = os.WriteFile(in, []byte("host:zzqrepo\nhost:zzqpriv\n"), 0o600)
+	_ = os.WriteFile(names, []byte("zzqrepo\n"), 0o644)
+	code, so, e := do("denylist-gen", "--in", in, "--out", out, "--public-repos", names)
+	if code != exitOK {
+		t.Fatalf("%d %q %q", code, so, e)
+	}
+	l, err := denylist.Parse(strings.NewReader(mustRead(t, out)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tok := range []string{"zzqrepo", "zzqpriv"} {
+		if _, ok := l.Lookup(tok); !ok {
+			t.Errorf("token %s was dropped", tok)
+		}
+	}
+}
+
+func mustRead(t *testing.T, p string) string {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 func TestPanicExitsThree(t *testing.T) {
