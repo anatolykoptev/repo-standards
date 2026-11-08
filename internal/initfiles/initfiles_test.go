@@ -574,6 +574,54 @@ func TestIssueFormShapes(t *testing.T) {
 	}
 }
 
+// R9: a docs page whose name carries a space and parentheses must produce an
+// index row the link parser resolves — the bare target reads as "my" — and a
+// second index run must not append the row again.
+func TestInitIndexAngleBracketsForSpacedNames(t *testing.T) {
+	files := baseRepo()
+	files["docs/my doc (v2).md"] = filler("Spaced", 3)
+	root := writeRepo(t, files)
+	runInit(t, Options{Root: root, Visibility: check.Private, Holder: "Zzq Holder"})
+	gitIn(t, root, "add", "-A")
+	if fs := runCheck(t, root, check.Private); len(fs) != 0 {
+		t.Fatalf("check after init: %v", fs)
+	}
+	idx, err := os.ReadFile(filepath.Join(root, "docs", "INDEX.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(idx), "](<my doc (v2).md>)") {
+		t.Fatalf("spaced doc not linked via an angle-bracket target:\n%s", idx)
+	}
+	res, err := UpdateIndex(IndexOptions{Root: root})
+	if err != nil || !hasLine(res.Lines, "docs/INDEX.md is complete") {
+		t.Fatalf("index re-run: %v %v", res.Lines, err)
+	}
+	again, err := os.ReadFile(filepath.Join(root, "docs", "INDEX.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != string(idx) {
+		t.Error("a second index run appended a duplicate row")
+	}
+}
+
+// R11: the disk listing only visits the directories the requirements name —
+// an unreadable directory anywhere else (a vendored tree, a build artefact)
+// does not abort the run.
+func TestInitIgnoresUnreadableDirs(t *testing.T) {
+	root := writeRepo(t, baseRepo())
+	blocked := filepath.Join(root, "vendor", "private")
+	if err := os.MkdirAll(blocked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(blocked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o755) })
+	runInit(t, Options{Root: root, Visibility: check.Private, Holder: "Zzq Holder"})
+}
+
 // checkIssueForm is a minimal YAML-subset validation: it scans the structure
 // rather than parsing the documents, so no YAML dependency is needed.
 func checkIssueForm(t *testing.T, name, doc string) {

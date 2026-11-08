@@ -203,6 +203,18 @@ func TestIndexBasenameCollision(t *testing.T) {
 	}
 }
 
+// R10: a real pull-request template is fill-in scaffolding — TODO markers,
+// instructive comments and [insert … here] fields are its content, not
+// leftovers; the placeholder scan does not run on it.
+func TestPullTemplatePlaceholdersAreContent(t *testing.T) {
+	files := with(goodFiles(Public), map[string]string{
+		".github/pull_request_template.md": "# Pull request\n\n<!-- Describe your change here -->\n\nTODO\n\n[Insert screenshots here]\n",
+	})
+	if fs := run(t, writeRepo(t, files), Public, nil); len(fs) != 0 {
+		t.Fatalf("PR template placeholders flagged: %v", fs)
+	}
+}
+
 func TestIndexLinkForms(t *testing.T) {
 	files := with(goodFiles(Public), map[string]string{
 		"docs/one.md":           prose("1", 3),
@@ -216,13 +228,14 @@ func TestIndexLinkForms(t *testing.T) {
 		"docs/nine/up.md":       prose("9", 3),
 		"docs/ten.md":           prose("10", 3),
 		"docs/UPPER.MD":         prose("11", 3),
+		"docs/angle spaced.md":  prose("12", 3),
 		"docs/unlinked-last.md": prose("x", 3),
 	})
 	files["docs/INDEX.md"] += "" +
 		"[a](./one.md#section) [b](two%20words.md) [c](sub/three.md \"title\")\n" +
 		"[d](<four.md>) [e](/docs/five.md) [f](six.md?plain=1)\n" +
 		"[g]: seven.md\n<a href=\"eight.md\">h</a> [i](nine/../nine/up.md) [j](ten.md)\n[k](UPPER.MD)\n" +
-		"[ext](https://example.com/unlinked-last.md)\n"
+		"[l](<angle spaced.md>) [ext](https://example.com/unlinked-last.md)\n"
 	got := ids(run(t, writeRepo(t, files), Public, nil))
 	want := []string{IndexLink + " docs/unlinked-last.md"}
 	if !equal(got, want) {

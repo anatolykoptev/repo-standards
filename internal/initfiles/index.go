@@ -36,7 +36,7 @@ func indexMarkdown(root string, files []string, written map[string][]byte) strin
 
 // indexRow renders one index table row: "[label](target) | description".
 func indexRow(t check.IndexTarget, desc string) string {
-	return fmt.Sprintf("| [%s](%s) | %s |\n", label(t.Path), relFromDocs(t.Path), cell(desc))
+	return fmt.Sprintf("| [%s](%s) | %s |\n", linkText(label(t.Path)), linkTarget(relFromDocs(t.Path)), cell(desc))
 }
 
 // IndexOptions configures UpdateIndex.
@@ -177,6 +177,31 @@ func firstHeading(root, rel string, written map[string][]byte) string {
 		}
 	}
 	return ""
+}
+
+// linkText escapes a link's visible text: \ before ] or ( would form an
+// unintended escape, ] closes the link early, [ opens a nested one, a bare (
+// can start a destination inside the text, and | ends the table cell.
+func linkText(s string) string {
+	return strings.NewReplacer("\\", "\\\\", "[", "\\[", "]", "\\]", "(", "\\(", "|", "\\|").Replace(s)
+}
+
+// linkEsc percent-encodes what cannot appear inside an angle-bracket target:
+// the delimiters themselves, the characters the link parser splits a
+// fragment or query on, and %, which it would otherwise unescape into a
+// different name.
+var linkEsc = strings.NewReplacer(
+	"%", "%25", "<", "%3C", ">", "%3E", "?", "%3F", "#", "%23")
+
+// linkTarget renders a link destination. A bare target is read up to the
+// first space or ) — and a leading < already opens an angle-bracket
+// destination — so a path carrying a breaking character goes in angle
+// brackets.
+func linkTarget(t string) string {
+	if strings.ContainsAny(t, " \t()<>?#%") {
+		return "<" + linkEsc.Replace(t) + ">"
+	}
+	return t
 }
 
 // cell escapes a table cell: a bare | would end the column.

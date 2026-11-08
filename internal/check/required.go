@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -11,8 +12,8 @@ type requirement struct {
 	names []string // accepted spellings, first is canonical
 	min   int      // minimum size in bytes after trimming whitespace
 	// skipPlaceholders skips the template-marker scan (licence texts legitimately
-	// contain "[yyyy]" boilerplate; .gitignore has no prose; an issue template
-	// is itself fill-in scaffolding).
+	// contain "[yyyy]" boilerplate; .gitignore has no prose; an issue or
+	// pull-request template is itself fill-in scaffolding).
 	skipPlaceholders bool
 	// dir, when non-empty, adds a directory alternative: the requirement is
 	// also satisfied by the first tracked file directly inside it for which
@@ -48,7 +49,7 @@ var requirements = []requirement{
 	{names: []string{PullRequestTemplate, ".github/PULL_REQUEST_TEMPLATE.md",
 		"pull_request_template.md", "PULL_REQUEST_TEMPLATE.md",
 		"docs/pull_request_template.md", "docs/PULL_REQUEST_TEMPLATE.md"},
-		min: 30, dir: pullTemplateDir, dirFile: isMarkdownFile,
+		min: 30, skipPlaceholders: true, dir: pullTemplateDir, dirFile: isMarkdownFile,
 		dirHint: "a .md file directly inside " + pullTemplateDir},
 	{names: []string{IssueTemplateDir, "ISSUE_TEMPLATE.md", ".github/ISSUE_TEMPLATE.md",
 		"docs/ISSUE_TEMPLATE.md"}, min: 30, skipPlaceholders: true,
@@ -137,6 +138,28 @@ func AcceptedSpellings(canonical string) []string {
 		}
 	}
 	return nil
+}
+
+// RequirementDirs lists the directories a requirement spelling or directory
+// alternative lives in — where init looks for the real on-disk spelling of a
+// file it might keep. "." is the repository root. The list is derived from
+// requirements, so a new spelling cannot outgrow it.
+func RequirementDirs() []string {
+	set := map[string]bool{}
+	for _, r := range requirements {
+		for _, n := range r.names {
+			set[path.Dir(n)] = true
+		}
+		if r.dir != "" {
+			set[strings.TrimSuffix(r.dir, "/")] = true
+		}
+	}
+	dirs := make([]string, 0, len(set))
+	for d := range set {
+		dirs = append(dirs, d)
+	}
+	sort.Strings(dirs)
+	return dirs
 }
 
 func checkRequired(root string, files []string, set map[string]bool, content map[string][]byte) []Finding {

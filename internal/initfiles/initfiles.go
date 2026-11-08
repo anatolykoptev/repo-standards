@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -289,30 +290,32 @@ func fileUniverse(resolvedRoot string, files []string) (all []string, present ma
 	return all, present, nil
 }
 
-// diskFiles returns the work-tree files under resolvedRoot as slash-separated
-// relative paths. Names come from directory listings, so they carry the real
-// on-disk spelling even on a case-insensitive filesystem — unlike an Lstat of
-// a candidate name, which would claim a differently-cased file exists.
+// diskFiles returns the work-tree files that can satisfy a requirement:
+// every entry of the directories requirement spellings live in, listed
+// non-recursively as slash-separated paths. Names come from the directory
+// listing, so they carry the real on-disk spelling even on a case-insensitive
+// filesystem — unlike an Lstat of a candidate name, which would claim a
+// differently-cased file exists. A missing directory lists as empty; anything
+// else on disk — vendored trees, build artefacts, gitignored files — is not
+// part of the requirement universe.
 func diskFiles(resolvedRoot string) ([]string, error) {
 	var out []string
-	err := filepath.WalkDir(resolvedRoot, func(p string, d fs.DirEntry, err error) error {
+	for _, dir := range check.RequirementDirs() {
+		entries, err := os.ReadDir(filepath.Join(resolvedRoot, filepath.FromSlash(dir)))
 		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if d.Name() == ".git" {
-				return filepath.SkipDir
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
 			}
-			return nil
+			return nil, err
 		}
-		rel, err := filepath.Rel(resolvedRoot, p)
-		if err != nil {
-			return err
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			out = append(out, path.Join(dir, e.Name()))
 		}
-		out = append(out, filepath.ToSlash(rel))
-		return nil
-	})
-	return out, err
+	}
+	return out, nil
 }
 
 // checkPath verifies a planned write stays inside the repository. Every
