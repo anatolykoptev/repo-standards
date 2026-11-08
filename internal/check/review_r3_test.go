@@ -52,13 +52,27 @@ func TestInlineLinksLinear(t *testing.T) {
 		{"newline titles", "](a (\n"},
 	} {
 		md := strings.Repeat(c.unit, (1<<20)/len(c.unit))
-		done := make(chan struct{})
-		go func() { inlineLinks(md); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
-			t.Errorf("%s: 1 MiB scan still running after 2s, want linear", c.name)
-		}
+		within2s(t, c.name+" (inlineLinks)", func() { inlineLinks(md) })
+		within2s(t, c.name+" (linkRefs)", func() { linkRefs(md, ".", true) })
+	}
+	for _, c := range []struct{ name, unit string }{
+		{"unclosed inline comments", "x <!-- "},
+		{"many short links", "[a](b.md) "},
+		{"unmatched backtick runs", "` `` "},
+	} {
+		md := strings.Repeat(c.unit, (2<<20)/len(c.unit))
+		within2s(t, c.name+" (linkRefs)", func() { linkRefs(md, ".", true) })
+	}
+}
+
+func within2s(t *testing.T, name string, f func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { f(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * timeBudgetFactor * time.Second):
+		t.Errorf("%s: large input still running after 2s, want linear", name)
 	}
 }
 

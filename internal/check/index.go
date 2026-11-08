@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -168,6 +169,7 @@ func codeSpanLen(s string) int {
 // CommonMark parses it.
 func stripLine(line string, inComment, laterCloser bool) (string, bool) {
 	var b strings.Builder
+	lastClose := strings.LastIndex(line, "-->") // once per line: keeps the pass linear
 	i := 0
 	for i < len(line) {
 		if inComment {
@@ -184,7 +186,7 @@ func stripLine(line string, inComment, laterCloser bool) (string, bool) {
 			switch {
 			case wsOnly && i <= 3:
 				inComment = true
-			case !wsOnly && (strings.Contains(line[i+4:], "-->") || laterCloser):
+			case !wsOnly && (lastClose >= i+4 || laterCloser):
 				inComment = true
 			default:
 				b.WriteString(line[i : i+4])
@@ -405,6 +407,13 @@ func linkRefs(md, baseDir string, imports bool) []linkRef {
 			}
 		}
 	}
+	// Newline offsets, so a link's line is a binary search, not a rescan.
+	var nls []int
+	for i := 0; i < len(md); i++ {
+		if md[i] == '\n' {
+			nls = append(nls, i)
+		}
+	}
 	var out []linkRef
 	for _, r := range raw {
 		t := strings.TrimSuffix(strings.TrimPrefix(r.target, "<"), ">")
@@ -426,7 +435,7 @@ func linkRefs(md, baseDir string, imports bool) []linkRef {
 		} else {
 			p = path.Clean(path.Join(baseDir, t))
 		}
-		out = append(out, linkRef{path: p, line: 1 + strings.Count(md[:r.at], "\n")})
+		out = append(out, linkRef{path: p, line: 1 + sort.SearchInts(nls, r.at)})
 	}
 	return out
 }
