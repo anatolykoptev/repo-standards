@@ -53,6 +53,12 @@ func repoFiles(root string) (files []string, notGit bool, err error) {
 	return files, true, err
 }
 
+// RepoFiles exposes repoFiles to the sibling init command, which reads the
+// same file set the checks run on.
+func RepoFiles(root string) (files []string, notGit bool, err error) {
+	return repoFiles(root)
+}
+
 // readRegular reads a file only when it is a regular file inside root. A
 // symlink or submodule entry returns ok=false: following a tracked symlink
 // would let a repository make the scanner read files outside itself.

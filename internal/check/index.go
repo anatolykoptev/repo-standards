@@ -158,36 +158,79 @@ func isNestedClaudeMD(f string) bool {
 	return path.Base(f) == "CLAUDE.md" && f != "CLAUDE.md" && !isVendored(f) && !strings.HasPrefix(f, "docs/")
 }
 
+// IndexTarget is one path docs/INDEX.md must link, with the rule that
+// requires it: a root document, a .md page under docs/ or a nested CLAUDE.md.
+type IndexTarget struct {
+	Path string
+	Kind string // "root", "docs" or "claude"
+}
+
+// IndexTargets lists the link targets the index check requires, in display
+// order: the root documents that are present, then every tracked .md under
+// docs/ except INDEX.md itself and every nested CLAUDE.md, sorted by path.
+// checkIndex verifies each is linked; init writes an INDEX row for each, so
+// the generated index can never miss a target the check requires.
+func IndexTargets(files []string) []IndexTarget {
+	set := make(map[string]bool, len(files))
+	for _, f := range files {
+		set[f] = true
+	}
+	var out []IndexTarget
+	for _, f := range rootDocs {
+		if set[f] {
+			out = append(out, IndexTarget{f, "root"})
+		}
+	}
+	for _, f := range files {
+		switch {
+		case f == indexPath:
+		case strings.HasPrefix(f, "docs/") && strings.EqualFold(path.Ext(f), ".md"):
+			out = append(out, IndexTarget{f, "docs"})
+		case isNestedClaudeMD(f):
+			// Subsystem rules live in per-directory CLAUDE.md files; an agent
+			// that starts from the index must learn they exist.
+			out = append(out, IndexTarget{f, "claude"})
+		}
+	}
+	return out
+}
+
+// UnindexedTargets returns the index targets of files that the markdown of
+// docs/INDEX.md does not link — the same set the index-link check reports.
+// repo-standards index appends a row per result.
+func UnindexedTargets(md string, files []string) []IndexTarget {
+	linked := linkTargets(md, path.Dir(indexPath))
+	var out []IndexTarget
+	for _, t := range IndexTargets(files) {
+		if !linked[t.Path] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // checkIndex requires docs/INDEX.md to link every tracked .md under docs/,
 // every root document and every nested CLAUDE.md, and every in-repo link in it
 // to resolve to a tracked file or directory.
-func checkIndex(files []string, set map[string]bool, content map[string][]byte, rootDocs []string) []Finding {
+func checkIndex(files []string, content map[string][]byte) []Finding {
 	data, ok := content[indexPath]
 	if !ok {
 		return nil // absence is already a missing-file finding
 	}
 	// A map lookup, not a shell pipeline: the shell version of this check
 	// (`printf | grep -q` under pipefail) returned random results on Linux
-	// because grep -q exits early and printf gets SIGPIPE.
-	linked := linkTargets(string(data), path.Dir(indexPath))
+	// because grep -q exits on the first match and the writer received
+	// SIGPIPE.
 	var out []Finding
-	for _, f := range files {
-		if f == indexPath {
-			continue
+	for _, t := range UnindexedTargets(string(data), files) {
+		msg := "not linked from " + indexPath
+		switch t.Kind {
+		case "root":
+			msg = "root document " + msg
+		case "claude":
+			msg = "nested CLAUDE.md not linked from " + indexPath + " (every tracked CLAUDE.md must be indexed)"
 		}
-		if strings.HasPrefix(f, "docs/") && strings.EqualFold(path.Ext(f), ".md") && !linked[f] {
-			out = append(out, Finding{Check: IndexLink, Path: f, Msg: "not linked from " + indexPath})
-		}
-		// Subsystem rules live in per-directory CLAUDE.md files; an agent that
-		// starts from the index must learn they exist.
-		if isNestedClaudeMD(f) && !linked[f] {
-			out = append(out, Finding{Check: IndexLink, Path: f, Msg: "nested CLAUDE.md not linked from " + indexPath + " (every tracked CLAUDE.md must be indexed)"})
-		}
-	}
-	for _, f := range rootDocs {
-		if set[f] && !linked[f] {
-			out = append(out, Finding{Check: IndexLink, Path: f, Msg: "root document not linked from " + indexPath})
-		}
+		out = append(out, Finding{Check: IndexLink, Path: t.Path, Msg: msg})
 	}
 	return out
 }

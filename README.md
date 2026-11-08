@@ -11,7 +11,7 @@ project-maturity bar this tool enforces.
 
 | Check id | Rule |
 |---|---|
-| `missing-file` | README.md, CLAUDE.md, CHANGELOG.md, LICENSE (or LICENSE.md / LICENSE.txt), CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, .gitignore and docs/INDEX.md exist as tracked files |
+| `missing-file` | README.md, CLAUDE.md, CHANGELOG.md, LICENSE (or LICENSE.md / LICENSE.txt), CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, .gitignore, docs/INDEX.md, a pull-request template and at least one issue template under .github/ exist as tracked files |
 | `stub-file` | Each is above a minimum size and carries no template placeholder |
 | `index-link` | docs/INDEX.md links, by link target, every tracked `.md` under `docs/`, every root document and every nested `CLAUDE.md` (outside `vendor/` and `node_modules/`) |
 | `index-dead-link` | An in-repo link in docs/INDEX.md points at nothing: not a tracked file, not a directory holding one |
@@ -42,6 +42,41 @@ and later deleted is still found.
 
 Exit codes: 0 clean, 1 findings, 2 usage or I/O error, 3 internal error.
 The run ends with `skipped N binary files, suppressed M finding(s)` on stderr.
+
+## Scaffold the documents
+
+`init` writes the boilerplate the check requires — the code of conduct, the
+security policy, the licence, the issue and pull-request templates and
+docs/INDEX.md — where each is missing, and never touches a file that exists.
+It then lists the required documents that remain for a human: README.md,
+CLAUDE.md, CONTRIBUTING.md, CHANGELOG.md and .gitignore are never written,
+because they must come from the project's real code and history.
+
+```sh
+repo-standards init --visibility public --license apache-2.0 --repo OWNER/NAME .
+```
+
+The visibility flags are the same as `check`'s. A public repository takes
+`--license apache-2.0` or `--license mit` (choosing a licence is the owner's
+decision; without one LICENSE is skipped, not guessed) and resolves
+OWNER/NAME for the security-advisory links from `--repo` or the origin
+remote. A private repository takes `--holder` for the proprietary LICENCE.
+`--dry-run` reports what would be created and writes nothing.
+
+A repository that already has issue templates — a file under
+`.github/ISSUE_TEMPLATE/` or a legacy `ISSUE_TEMPLATE.md` — keeps them:
+init never replaces the issue intake. The accepted spellings for every
+generated file are the check's own list, so init never reports `kept` for a
+file the check would reject.
+
+`repo-standards index` maintains the generated index afterwards: it appends
+a docs/INDEX.md row for every tracked document the `index-link` rule reports
+as unindexed, without rewriting or reordering existing rows. Run it after
+adding the documents init leaves for a human — init says so itself.
+
+```sh
+repo-standards index .
+```
 
 ## Use it in CI
 

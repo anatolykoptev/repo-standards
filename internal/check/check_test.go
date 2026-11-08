@@ -2,6 +2,7 @@ package check
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -49,6 +50,93 @@ func TestMissingIndexIsOneFinding(t *testing.T) {
 	got := ids(run(t, root, Public, nil))
 	if want := []string{MissingFile + " docs/INDEX.md"}; !equal(got, want) {
 		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+// F5: a repo missing .github/pull_request_template.md or any issue template
+// gets a missing-file finding.
+func TestMissingTemplateFiles(t *testing.T) {
+	for _, c := range []struct {
+		name, file, want string
+	}{
+		{"pull request template", ".github/pull_request_template.md", MissingFile + " .github/pull_request_template.md"},
+		{"issue template dir", ".github/ISSUE_TEMPLATE/bug_report.yml", MissingFile + " .github/ISSUE_TEMPLATE/"},
+	} {
+		root := writeRepo(t, without(goodFiles(Public), c.file))
+		got := ids(run(t, root, Public, nil))
+		if !equal(got, []string{c.want}) {
+			t.Errorf("%s: got %v want [%s]", c.name, got, c.want)
+		}
+	}
+}
+
+func TestPullRequestTemplateSpellings(t *testing.T) {
+	for _, name := range []string{".github/PULL_REQUEST_TEMPLATE.md", "pull_request_template.md", "docs/pull_request_template.md",
+		"PULL_REQUEST_TEMPLATE.md", "docs/PULL_REQUEST_TEMPLATE.md", ".github/PULL_REQUEST_TEMPLATE/bugfix.md"} {
+		files := without(goodFiles(Public), ".github/pull_request_template.md")
+		files[name] = prose("Pull request", 1)
+		// A template under docs/ is a docs page: the index must link it.
+		if strings.HasPrefix(name, "docs/") {
+			files["docs/INDEX.md"] += "- [PR template](" + path.Base(name) + ")\n"
+		}
+		if fs := run(t, writeRepo(t, files), Public, nil); len(fs) != 0 {
+			t.Errorf("%s: %v", name, fs)
+		}
+	}
+	// A non-Markdown file, or one nested below the template directory, does
+	// not count: GitHub reads only .md files directly inside it.
+	for _, name := range []string{".github/PULL_REQUEST_TEMPLATE/bugfix.txt", ".github/PULL_REQUEST_TEMPLATE/nested/x.md"} {
+		files := without(goodFiles(Public), ".github/pull_request_template.md")
+		files[name] = prose("Pull request", 1)
+		got := ids(run(t, writeRepo(t, files), Public, nil))
+		if want := []string{MissingFile + " .github/pull_request_template.md"}; !equal(got, want) {
+			t.Errorf("%s: got %v want %v", name, got, want)
+		}
+	}
+}
+
+// The legacy single-file issue templates GitHub accepts satisfy the
+// requirement exactly like a file in the template directory.
+func TestLegacyIssueTemplateFiles(t *testing.T) {
+	for _, name := range []string{"ISSUE_TEMPLATE.md", ".github/ISSUE_TEMPLATE.md", "docs/ISSUE_TEMPLATE.md"} {
+		files := without(goodFiles(Public), ".github/ISSUE_TEMPLATE/bug_report.yml", ".github/ISSUE_TEMPLATE/config.yml")
+		files[name] = prose("Issue", 1)
+		// A template under docs/ is a docs page: the index must link it.
+		if strings.HasPrefix(name, "docs/") {
+			files["docs/INDEX.md"] += "- [Issue](ISSUE_TEMPLATE.md)\n"
+		}
+		if fs := run(t, writeRepo(t, files), Public, nil); len(fs) != 0 {
+			t.Errorf("%s: %v", name, fs)
+		}
+	}
+}
+
+func TestIssueTemplateDir(t *testing.T) {
+	cases := []struct {
+		name string
+		set  map[string]string // replaces the whole ISSUE_TEMPLATE dir contents
+		want []string
+	}{
+		{"config only", map[string]string{".github/ISSUE_TEMPLATE/config.yml": "blank_issues_enabled: false\n"},
+			[]string{MissingFile + " .github/ISSUE_TEMPLATE/"}},
+		{"config.yaml is not a template", map[string]string{".github/ISSUE_TEMPLATE/config.yml": "x: y\n", ".github/ISSUE_TEMPLATE/config.yaml": strings.Repeat("x", 40)},
+			[]string{MissingFile + " .github/ISSUE_TEMPLATE/"}},
+		{"markdown template", map[string]string{".github/ISSUE_TEMPLATE/question.md": prose("question", 1)}, nil},
+		{"yaml template", map[string]string{".github/ISSUE_TEMPLATE/feature.yaml": "name: Feature\ndescription: d\nbody: []\n"}, nil},
+		{"nested file does not count", map[string]string{".github/ISSUE_TEMPLATE/nested/x.md": prose("x", 1)},
+			[]string{MissingFile + " .github/ISSUE_TEMPLATE/"}},
+		{"tiny template is a stub", map[string]string{".github/ISSUE_TEMPLATE/a.yml": "x\n"},
+			[]string{StubFile + " .github/ISSUE_TEMPLATE/a.yml"}},
+	}
+	for _, c := range cases {
+		files := without(goodFiles(Public), ".github/ISSUE_TEMPLATE/bug_report.yml", ".github/ISSUE_TEMPLATE/config.yml")
+		for k, v := range c.set {
+			files[k] = v
+		}
+		got := ids(run(t, writeRepo(t, files), Public, nil))
+		if !equal(got, c.want) {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
 	}
 }
 
@@ -115,6 +203,18 @@ func TestIndexBasenameCollision(t *testing.T) {
 	}
 }
 
+// R10: a real pull-request template is fill-in scaffolding — TODO markers,
+// instructive comments and [insert … here] fields are its content, not
+// leftovers; the placeholder scan does not run on it.
+func TestPullTemplatePlaceholdersAreContent(t *testing.T) {
+	files := with(goodFiles(Public), map[string]string{
+		".github/pull_request_template.md": "# Pull request\n\n<!-- Describe your change here -->\n\nTODO\n\n[Insert screenshots here]\n",
+	})
+	if fs := run(t, writeRepo(t, files), Public, nil); len(fs) != 0 {
+		t.Fatalf("PR template placeholders flagged: %v", fs)
+	}
+}
+
 func TestIndexLinkForms(t *testing.T) {
 	files := with(goodFiles(Public), map[string]string{
 		"docs/one.md":           prose("1", 3),
@@ -128,13 +228,14 @@ func TestIndexLinkForms(t *testing.T) {
 		"docs/nine/up.md":       prose("9", 3),
 		"docs/ten.md":           prose("10", 3),
 		"docs/UPPER.MD":         prose("11", 3),
+		"docs/angle spaced.md":  prose("12", 3),
 		"docs/unlinked-last.md": prose("x", 3),
 	})
 	files["docs/INDEX.md"] += "" +
 		"[a](./one.md#section) [b](two%20words.md) [c](sub/three.md \"title\")\n" +
 		"[d](<four.md>) [e](/docs/five.md) [f](six.md?plain=1)\n" +
 		"[g]: seven.md\n<a href=\"eight.md\">h</a> [i](nine/../nine/up.md) [j](ten.md)\n[k](UPPER.MD)\n" +
-		"[ext](https://example.com/unlinked-last.md)\n"
+		"[l](<angle spaced.md>) [ext](https://example.com/unlinked-last.md)\n"
 	got := ids(run(t, writeRepo(t, files), Public, nil))
 	want := []string{IndexLink + " docs/unlinked-last.md"}
 	if !equal(got, want) {

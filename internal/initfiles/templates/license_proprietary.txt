@@ -1,0 +1,4 @@
+Copyright (c) {{YEAR}} {{HOLDER}}. All rights reserved.
+
+No licence is granted; you may not use, copy, modify or distribute this
+software without the holder's written permission.

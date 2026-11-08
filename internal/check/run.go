@@ -89,14 +89,14 @@ func Run(opts Options) (Result, error) {
 	content := map[string][]byte{}
 
 	out := checkRequired(opts.Root, files, set, content)
-	out = append(out, checkIndex(files, set, content, rootDocs)...)
+	out = append(out, checkIndex(files, content)...)
 	out = append(out, checkIndexDeadLinks(files, content)...)
 	out = append(out, checkClaudeIndex(content)...)
 	for _, r := range requirements {
 		if r.names[0] != "LICENSE" {
 			continue
 		}
-		if name, ok := r.found(set); ok {
+		if name, ok := r.found(files, set); ok {
 			if data, ok := content[name]; ok {
 				out = append(out, checkLicense(opts.Visibility, name, data)...)
 			}

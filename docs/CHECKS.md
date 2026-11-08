@@ -18,13 +18,22 @@ The same list applies to public and private repositories.
 | CODE_OF_CONDUCT.md | 150 |
 | .gitignore | at least one non-comment pattern |
 | docs/INDEX.md | 60 |
+| .github/pull_request_template.md, .github/PULL_REQUEST_TEMPLATE.md, pull_request_template.md, PULL_REQUEST_TEMPLATE.md, docs/pull_request_template.md or docs/PULL_REQUEST_TEMPLATE.md, or a `.md` file directly inside .github/PULL_REQUEST_TEMPLATE/ | 30 |
+| a `.yml`, `.yaml` or `.md` issue template other than config.yml directly inside .github/ISSUE_TEMPLATE/, or a legacy ISSUE_TEMPLATE.md, .github/ISSUE_TEMPLATE.md or docs/ISSUE_TEMPLATE.md | 30 |
+
+The issue-template directory is satisfied by a file directly inside it; a
+config.yml or config.yaml is the chooser configuration, not a template, and
+files in subdirectories do not count. The pull-request directory follows the
+same shape: only `.md` files directly inside `.github/PULL_REQUEST_TEMPLATE/`
+count.
 
 A missing file is `missing-file`. A file below its minimum, a file that is not a
 regular file (a symlink is not followed), or a file with a template placeholder
 is `stub-file`. Placeholders are: a TODO or TBD marker as a whole word, the
 classic filler paragraph, an unfilled bracketed template field such as the
 contact field of the Contributor Covenant, and sentences such as "project
-description here". Licence texts and .gitignore skip the placeholder scan.
+description here". Licence texts, .gitignore and issue templates skip the
+placeholder scan (an issue template is itself fill-in scaffolding).
 
 ## docs/INDEX.md
 
@@ -54,6 +63,11 @@ SECURITY.md, CODE_OF_CONDUCT.md and the licence file), plus every tracked
 CLAUDE.md files hold subsystem rules, and an agent that starts from the index
 must learn they exist. Files under `vendor/` or `node_modules/` are exempt, the
 same set the personal-data scan skips. These findings are `index-link`.
+
+`repo-standards index` repairs them: it appends one row per unindexed
+document to docs/INDEX.md, or generates the whole index when the file is
+missing. Existing rows are never rewritten or reordered; `--dry-run` reports
+what would be appended.
 
 ### Dead links: `index-dead-link`
 

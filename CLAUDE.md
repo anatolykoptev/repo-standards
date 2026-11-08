@@ -1,7 +1,9 @@
 # repo-standards: notes for agents
 
 Standard-library-only Go command. Layout: `cmd/repo-standards` (flags, exit
-codes), `internal/check` (one file per check), `internal/denylist` (hash list).
+codes), `internal/check` (one file per check), `internal/denylist` (hash
+list), `internal/initfiles` (the `init` scaffold: embedded templates and the
+docs/INDEX.md generator).
 
 Commands: `go vet ./... && go test ./...`, then
 `go run ./cmd/repo-standards check --visibility public .`. The repository must
