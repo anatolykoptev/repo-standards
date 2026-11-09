@@ -5,13 +5,16 @@
 | File | Where | Content |
 |---|---|---|
 | plaintext list | outside the repository, `<config dir>/repo-standards/denylist.txt`, mode 0600 | `category:token`, one per line, `#` comments |
-| hash list | `internal/denylist/denylist.hashes`, compiled into the binary | salt, one `category hash` line per token, and one `public-name hash` line per public repository name |
+| hash list | `internal/denylist/denylist.hashes`, compiled into the binary | salt, one `category hash` line per token, one `public-name hash` line per public repository name, and one `public-domain hash` line per public domain |
 
 `<config dir>` is `$XDG_CONFIG_HOME`, or `~/.config` when that is unset.
 
 Categories: `host`, `ssh-alias`, `home-user`, `account`, `email`, `domain`,
 `word`. A `word` entry reports as `pii-banned-word`, every other category as
-`pii-denylist`.
+`pii-denylist`. Beside the categories the plaintext accepts
+`public-domain:<domain>` — a domain of at least two lowercase `[a-z0-9-]`
+labels joined by dots. It is not a forbidden token; it records the domain
+for the contextual suppression described below.
 
 Tokens are lowercase, use only `a-z 0-9 _ . @ -`, and are at least three
 characters long. Anything else is rejected with a line number (the message never
@@ -41,6 +44,18 @@ token can mean nothing but the repository itself: as the name segment of
 `github.com/<owner>/<name>` in a URL or module path, or as the declared name
 in the repository's own `go.mod`, `package.json` or `Cargo.toml`. Anywhere
 else the token is reported.
+
+A denylist token that is also a label of a public domain works the same
+way, recorded by a `public-domain:<domain>` line instead of `--public-repos`.
+The token stays on the list; the scanner suppresses it only where it can
+mean nothing but that domain: as the leftmost label of the domain in DNS
+order (`zzqhost.example`, and equally inside `mcp.zzqhost.example` — the
+label above it does not matter), or followed by the domain's tail in
+reverse-DNS order, the Java package id form (`example.zzqhost.app`,
+`example.zzqhost`). A bare `zzqhost`, `zzqhost-tunnel`, `zzqhost.internal`
+or `other.zzqhost.app` is still reported, and so is a second denylisted
+label inside the same name (`zzqnode` in `zzqnode.zzqhost.example`). A
+suppressed occurrence is silent, not counted as a marker suppression.
 
 ## What a salted hash protects
 

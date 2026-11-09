@@ -180,6 +180,16 @@ the run ends with `skipped N binary files`. Their names are still scanned.
   lowercased, and the run plus each contiguous sub-sequence of up to six of its
   pieces is hashed and looked up. A host inside a URL and a domain inside an
   e-mail address are found; a word that merely contains a token is not.
+  A match is suppressed where the token can only spell a public domain that
+  generation time recorded as a `public-domain` record (see
+  [DENYLIST.md](DENYLIST.md)): the run text from the token on reads
+  `token.label[.label…]` in DNS order (`zzqhost.example` itself or inside
+  `mcp.zzqhost.example`), or the text before it is the domain's tail in
+  reverse-DNS order, the Java package id form (`example.zzqhost.app`). The
+  suppression is per occurrence: a bare `zzqhost` on the same line still
+  reports, and so does a second denylisted label inside the same name
+  (`zzqnode` in `zzqnode.zzqhost.example`). A suppressed occurrence is
+  silent — not counted as a marker suppression.
 - `pii-banned-word`: see [DENYLIST.md](DENYLIST.md) for the separator and
   CamelCase variants.
 - `pii-suppression`: a suppression marker without a reason.

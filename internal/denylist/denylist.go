@@ -46,6 +46,15 @@ const WordCategory = "word"
 // segment, or the repo's own name in go.mod/package.json/Cargo.toml).
 const PublicNameCategory = "public-name"
 
+// PublicDomainCategory marks a hash-file record that is not a denylist
+// entry: the hashed value is a public domain name, recorded from a
+// "public-domain:<domain>" plaintext line. A denylisted token that is also
+// a label of that domain stays on the list, but the scanner suppresses it
+// where it can only spell the domain (the leftmost label in DNS order, or
+// followed by the domain's tail in reverse-DNS order as in a Java package
+// id).
+const PublicDomainCategory = "public-domain"
+
 // Categories a plaintext list may use.
 var categories = map[string]bool{
 	"host": true, "ssh-alias": true, "home-user": true,
@@ -59,10 +68,12 @@ type List struct {
 	salt []byte
 	// entries maps a token hash to its category; banned words live in words
 	// instead so a token can be denylisted and banned at once, and public
-	// names live in public (they are context, not denylist entries).
+	// names and public domains live in their own maps (they are context,
+	// not denylist entries).
 	entries map[[sha256.Size]byte]string
 	words   map[[sha256.Size]byte]bool
 	public  map[[sha256.Size]byte]bool
+	domains map[[sha256.Size]byte]bool
 }
 
 // MinEmbeddedEntries is the fewest tokens the compiled-in list may hold. A list
@@ -150,6 +161,17 @@ func (l *List) IsPublicName(token string) bool {
 	return l.public[hash(l.salt, token)]
 }
 
+// IsPublicDomain reports whether the lowercase domain is recorded as a
+// public domain. The scanner suppresses a denylisted token only where it
+// spells that domain, so a hash file without public-domain records behaves
+// exactly like an older one.
+func (l *List) IsPublicDomain(domain string) bool {
+	if l == nil || len(l.domains) == 0 {
+		return false
+	}
+	return l.domains[hash(l.salt, domain)]
+}
+
 // Parse reads a hash file.
 func Parse(r io.Reader) (*List, error) {
 	l := &List{entries: map[[sha256.Size]byte]string{}}
@@ -183,6 +205,11 @@ func Parse(r io.Reader) (*List, error) {
 				l.public = map[[sha256.Size]byte]bool{}
 			}
 			l.public[k] = true
+		case f[0] == PublicDomainCategory:
+			if l.domains == nil {
+				l.domains = map[[sha256.Size]byte]bool{}
+			}
+			l.domains[k] = true
 		case f[0] == WordCategory:
 			if l.words == nil {
 				l.words = map[[sha256.Size]byte]bool{}
@@ -197,7 +224,7 @@ func Parse(r io.Reader) (*List, error) {
 	if err := sc.Err(); err != nil {
 		return nil, err
 	}
-	if l.Len()+len(l.public) > 0 && l.salt == nil {
+	if l.Len()+len(l.public)+len(l.domains) > 0 && l.salt == nil {
 		return nil, fmt.Errorf("denylist: hashes without a salt line")
 	}
 	return l, nil
@@ -243,6 +270,27 @@ func PublicNames(repoNames []string) map[string]bool {
 	return set
 }
 
+// validPublicDomain reports whether s has the only form the scanner can
+// produce as a public-domain candidate: at least two non-empty labels of
+// lowercase letters, digits and hyphens, joined by single dots.
+func validPublicDomain(s string) bool {
+	if !strings.Contains(s, ".") {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if label == "" {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // Generate turns a plaintext list ("category:token" per line, '#' comments)
 // into a hash file. A non-nil salt is reused so regeneration produces a
 // minimal diff; nil draws a fresh random salt. Every token in public (the
@@ -271,6 +319,21 @@ func Generate(plain io.Reader, salt []byte, public map[string]bool) (data []byte
 			return nil, 0, fmt.Errorf("plaintext line %d: want category:token", n)
 		}
 		cat, tok = strings.TrimSpace(cat), strings.TrimSpace(tok)
+		if cat == PublicDomainCategory {
+			// Reject rather than silently normalise, for the same reason
+			// as tokens: a domain the scanner cannot produce would look
+			// like protection and protect nothing.
+			if !validPublicDomain(tok) {
+				return nil, 0, fmt.Errorf("plaintext line %d: public-domain wants >= 2 lowercase [a-z0-9-] labels joined by dots", n)
+			}
+			sum := hash(salt, tok)
+			key := hex.EncodeToString(sum[:])
+			if !seen[cat+" "+key] {
+				seen[cat+" "+key] = true
+				recs = append(recs, rec{cat, key})
+			}
+			continue
+		}
 		if !categories[cat] {
 			return nil, 0, fmt.Errorf("plaintext line %d: unknown category %q", n, cat)
 		}

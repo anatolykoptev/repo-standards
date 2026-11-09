@@ -155,6 +155,66 @@ func TestPublicNamesRecorded(t *testing.T) {
 	}
 }
 
+func TestPublicDomainRecords(t *testing.T) {
+	plain := "ssh-alias:zzqhost\npublic-domain:zzqhost.example\npublic-domain:zzqhost.example\npublic-domain:deep.zzqhost.example\n"
+	data, _, err := Generate(strings.NewReader(plain), salt, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The domains are hashed like every other record: the plaintext never
+	// reaches the output.
+	for _, s := range []string{"zzqhost.example", "deep", "zzqhost"} {
+		if strings.Contains(string(data), s) {
+			t.Fatalf("plaintext present in output:\n%s", data)
+		}
+	}
+	if !strings.Contains(string(data), PublicDomainCategory+" ") {
+		t.Fatalf("no public-domain record written:\n%s", data)
+	}
+	l, err := Parse(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !l.IsPublicDomain("zzqhost.example") || !l.IsPublicDomain("deep.zzqhost.example") {
+		t.Fatal("recorded domains not read back")
+	}
+	for _, d := range []string{"zzqhost.internal", "other.zzqhost.example", "zzqhost"} {
+		if l.IsPublicDomain(d) {
+			t.Errorf("unrecorded domain %q matches", d)
+		}
+	}
+	// A public domain is context, not a denylist entry: it must not count
+	// toward the minimum and must not match by itself.
+	if _, ok := l.Lookup("zzqhost.example"); ok {
+		t.Fatal("public-domain became a denylist entry")
+	}
+	if l.Len() != 1 {
+		t.Fatalf("Len() = %d, want 1", l.Len())
+	}
+}
+
+func TestPublicDomainRejectsBadInput(t *testing.T) {
+	for _, in := range []string{
+		"public-domain:zzqhost",          // one label
+		"public-domain:",                 // empty
+		"public-domain:zzqhost..example", // empty label
+		"public-domain:.zzqhost.example", // leading dot
+		"public-domain:zzqhost.example.", // trailing dot
+		"public-domain:Zzqhost.example",  // uppercase
+		"public-domain:zzq_host.example", // character outside [a-z0-9.-]
+		"public-domain:zzqhost.ex_ample",
+	} {
+		_, _, err := Generate(strings.NewReader(in+"\n"), salt, nil)
+		if err == nil {
+			t.Errorf("%q accepted", in)
+			continue
+		}
+		if v := in[len("public-domain:"):]; v != "" && strings.Contains(err.Error(), v) {
+			t.Errorf("%q: error echoes the value: %v", in, err)
+		}
+	}
+}
+
 func TestMinimumRejectsStrippedList(t *testing.T) {
 	if err := checkMinimum(gen(t, "host:zzqhost\n", salt)); err == nil {
 		t.Fatal("a one-entry list passed the minimum")

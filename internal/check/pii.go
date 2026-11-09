@@ -112,8 +112,10 @@ func lower(c byte) byte {
 // denylist: each maximal run of [a-z0-9_.@-] and every contiguous sub-sequence
 // of up to maxWindow of its pieces, joined by their original separators. So
 // "ssh.host.example" yields host.example. start and end bound the token's
-// occurrence in line. fn returns true to stop.
-func forEachCandidate(line string, fn func(tok string, start, end int) bool) {
+// occurrence in line; run is the lowercased run text and base its offset in
+// line, so run[start-base:end-base] is the token and the rest of run is its
+// neighbourhood. fn returns true to stop.
+func forEachCandidate(line string, fn func(tok string, start, end int, run string, base int) bool) {
 	n := len(line)
 	for i := 0; i < n; {
 		if !isRunChar(lower(line[i])) {
@@ -154,7 +156,7 @@ func forEachCandidate(line string, fn func(tok string, start, end int) bool) {
 		for a := range starts {
 			for b := a; b < len(starts) && b-a < maxWindow; b++ {
 				if tok := run[starts[a]:ends[b]]; len(tok) >= minTokenLen &&
-					fn(tok, base+starts[a], base+ends[b]) {
+					fn(tok, base+starts[a], base+ends[b], run, base) {
 					return
 				}
 			}
@@ -353,6 +355,62 @@ func lastSeg(s string) string {
 	return s
 }
 
+// publicDomainRef reports whether the occurrence [rs, re) of a denylisted
+// token inside run sits in a public domain recorded at generation time:
+// either the run text from rs on spells the domain in DNS order — the
+// occurrence is its leftmost label ("zzqhost.example", and equally inside
+// "mcp.zzqhost.example" — what precedes it in the run does not matter) —
+// or the run text before it is the domain's tail in reverse-DNS order, the
+// Java package id form ("example.zzqhost.app" for zzqhost.example). The
+// check is per occurrence: another use of the same token elsewhere on the
+// line is unaffected.
+func publicDomainRef(run string, rs, re int, dl *denylist.List) bool {
+	// DNS order: the candidates are run[rs:le] for every whole-label end
+	// le past the occurrence — tok.l1, tok.l1.l2, … up to maxWindow
+	// labels. A byte that cannot appear in a recorded domain only means
+	// the lookup fails, so labels need no further validation.
+	if re < len(run) && run[re] == '.' {
+		labels := strings.Count(run[rs:re], ".") + 1
+		for p := re + 1; p < len(run) && labels < maxWindow; {
+			e := strings.IndexByte(run[p:], '.')
+			le := len(run)
+			if e >= 0 {
+				le = p + e
+			}
+			if le == p {
+				break // an empty label is not a domain
+			}
+			labels++
+			if dl.IsPublicDomain(run[rs:le]) {
+				return true
+			}
+			p = le + 1
+		}
+	}
+	// Reverse DNS: the text before the occurrence is lN.….l1. and the
+	// candidates are tok.l1[.l2…], the preceding labels walked right to
+	// left ("example.zzqhost" -> zzqhost.example).
+	if rs > 0 && run[rs-1] == '.' {
+		labels := strings.Count(run[rs:re], ".") + 1
+		var b strings.Builder
+		b.WriteString(run[rs:re])
+		for le := rs - 1; le > 0 && labels < maxWindow; {
+			ls := strings.LastIndexByte(run[:le], '.') + 1
+			if ls == le {
+				break // an empty label is not a domain
+			}
+			labels++
+			b.WriteByte('.')
+			b.WriteString(run[ls:le])
+			if dl.IsPublicDomain(b.String()) {
+				return true
+			}
+			le = ls - 1
+		}
+	}
+	return false
+}
+
 // underPlansDir reports whether a tracked path sits below a directory named
 // exactly "plans", at any depth. Plan files leak operator paths and deploy
 // specifics and belong in a private location.
@@ -377,10 +435,13 @@ func scanLine(line, filePath string, dl *denylist.List) []hit {
 		out = append(out, hit{PIIHomePath, "absolute home directory path"})
 	}
 	cats := map[string]bool{}
-	forEachCandidate(line, func(tok string, start, end int) bool {
+	forEachCandidate(line, func(tok string, start, end int, run string, base int) bool {
 		if cat, ok := dl.Lookup(tok); ok && cat != denylist.WordCategory {
 			if dl.IsPublicName(tok) && publicRef(line, filePath, tok, start, end) {
 				return false // a reference to the public repository itself
+			}
+			if publicDomainRef(run, start-base, end-base, dl) {
+				return false // the token spells a recorded public domain
 			}
 			cats[cat] = true
 		}
