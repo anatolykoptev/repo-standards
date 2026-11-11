@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/anatolykoptev/repo-standards/compare/v0.4.0...v0.5.0) (2026-11-11)
+
+
+### Added
+
+* suppress denylist matches that spell a recorded public domain ([#16](https://github.com/anatolykoptev/repo-standards/issues/16)) ([1382a39](https://github.com/anatolykoptev/repo-standards/commit/1382a390817fb0a1b85db8c614c419a396ab5ae1))
+
 ## [0.4.0](https://github.com/anatolykoptev/repo-standards/compare/v0.3.1...v0.4.0) (2026-11-08)
 
 
