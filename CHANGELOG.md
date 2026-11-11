@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/anatolykoptev/repo-standards/compare/v0.5.0...v0.5.1) (2026-11-11)
+
+
+### Fixed
+
+* drop host aliases that equal a public brand from the denylist ([#19](https://github.com/anatolykoptev/repo-standards/issues/19)) ([5ded922](https://github.com/anatolykoptev/repo-standards/commit/5ded922eb28d6969959e8234b2a8ab35603dce61))
+
 ## [0.5.0](https://github.com/anatolykoptev/repo-standards/compare/v0.4.0...v0.5.0) (2026-11-11)
 
 
