@@ -359,17 +359,20 @@ func lastSeg(s string) string {
 // token inside run sits in a public domain recorded at generation time:
 // either the run text from rs on spells the domain in DNS order — the
 // occurrence is its leftmost label ("zzqhost.example", and equally inside
-// "mcp.zzqhost.example" — what precedes it in the run does not matter) —
-// or the run text before it is the domain's tail in reverse-DNS order, the
-// Java package id form ("example.zzqhost.app" for zzqhost.example). The
-// check is per occurrence: another use of the same token elsewhere on the
+// "mcp.zzqhost.example" or "user@zzqhost.example" — whatever precedes the
+// label does not matter) — or the run text before it is the domain's tail
+// in reverse-DNS order, the Java package id form ("example.zzqhost.app" for
+// zzqhost.example). In both forms the occurrence must be a whole label, not
+// part of a longer one ("zzqhost-foo"). The check is per occurrence: another use of the same token elsewhere on the
 // line is unaffected.
 func publicDomainRef(run string, rs, re int, dl *denylist.List) bool {
 	// DNS order: the candidates are run[rs:le] for every whole-label end
 	// le past the occurrence — tok.l1, tok.l1.l2, … up to maxWindow
 	// labels. A byte that cannot appear in a recorded domain only means
 	// the lookup fails, so labels need no further validation.
-	if re < len(run) && run[re] == '.' {
+	// The occurrence must also start a label: at the start of the run,
+	// after a '.', or after the '@' of an address.
+	if re < len(run) && run[re] == '.' && (rs == 0 || run[rs-1] == '.' || run[rs-1] == '@') {
 		labels := strings.Count(run[rs:re], ".") + 1
 		for p := re + 1; p < len(run) && labels < maxWindow; {
 			e := strings.IndexByte(run[p:], '.')
@@ -390,7 +393,10 @@ func publicDomainRef(run string, rs, re int, dl *denylist.List) bool {
 	// Reverse DNS: the text before the occurrence is lN.….l1. and the
 	// candidates are tok.l1[.l2…], the preceding labels walked right to
 	// left ("example.zzqhost" -> zzqhost.example).
-	if rs > 0 && run[rs-1] == '.' {
+	// The occurrence must also end its label: at the end of the run or at
+	// a '.', so "example.zzqhost-foo" (the label zzqhost-foo) is not
+	// zzqhost.example.
+	if rs > 0 && run[rs-1] == '.' && (re == len(run) || run[re] == '.') {
 		labels := strings.Count(run[rs:re], ".") + 1
 		var b strings.Builder
 		b.WriteString(run[rs:re])

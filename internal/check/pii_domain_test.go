@@ -82,3 +82,42 @@ func TestDenylistPublicDomainPerLine(t *testing.T) {
 		t.Fatalf("the bare use on line 2 must report: %v", res.Findings)
 	}
 }
+
+// The occurrence must be a whole label of the recorded domain: it ends at
+// the end of the run or at a '.', and starts at the start of the run, after
+// a '.', or after the '@' of an address. A longer label that merely contains
+// the token is a different name.
+func TestDenylistPublicDomainWholeLabelOnly(t *testing.T) {
+	for _, line := range []string{
+		"example.zzqhost-foo.app", // reverse DNS, label continues with '-'
+		"example.zzqhost_foo",     // reverse DNS, label continues with '_'
+		"foo-zzqhost.example",     // DNS order, label starts after '-'
+		"foo_zzqhost.example",     // DNS order, label starts after '_'
+	} {
+		res := domainRepo(t, line)
+		got := piiCheck(res, PIIDenylist)
+		if len(got) != 1 {
+			t.Errorf("%q: want one finding, got %v", line, res.Findings)
+			continue
+		}
+		if strings.Contains(got[0].String(), "zzq") {
+			t.Errorf("%q: finding leaks the value: %s", line, got[0])
+		}
+	}
+}
+
+func TestDenylistPublicDomainWholeLabelSuppressed(t *testing.T) {
+	for _, line := range []string{
+		"example.zzqhost.app",
+		"example.zzqhost",
+		"user@zzqhost.example",
+		"see example.zzqhost.app, then more",
+	} {
+		res := domainRepo(t, line)
+		for _, f := range res.Findings {
+			if f.Check == PIIDenylist {
+				t.Errorf("%q: whole-label public-domain use flagged: %v", line, f)
+			}
+		}
+	}
+}
